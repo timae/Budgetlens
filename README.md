@@ -22,7 +22,7 @@ Drop one or more CSV files (bank exports or budget sheets) and see where the mon
 | Spreadsheet formula injection in exports | Text cells starting with `= + - @ \t \r %`, a pipe or a full-width variant get a leading `'`. Numbers stay numeric. |
 | Framing, sniffing, leaks | `X-Frame-Options: DENY` and `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy: no-referrer`, COOP/COEP/CORP, a restrictive `Permissions-Policy`, `X-Robots-Tag: noindex`, HSTS. HTTP requests get a 308 to HTTPS based on `X-Forwarded-Proto`. |
 | Server hardening | Embedded file allowlist (`.html .css .js .svg .png .woff2 .txt`); dotfiles and unknown types are never served. Clean-path check (no `..`, backslashes or encoded separators). Read, write and idle timeouts, a 16 KB header limit and graceful shutdown. The runtime image is distroless, static and runs as non-root with no shell. |
-| Unwanted visitors | Deploio basic auth is on by default (`.deploio.yaml`). |
+| Public access | The app has no login (`enableBasicAuth: false` in `.deploio.yaml`); anyone with the URL can open it. That is safe because the server only hands out the app: files are read in each visitor's own browser and nothing is stored or shared between visitors. |
 
 Full header set: see `securityHeaders` and `contentSecurityPolicy` in `server.go`.
 
@@ -33,21 +33,17 @@ nctl auth login
 nctl create app budget-lens \
   --git-url=https://github.com/<org>/budget-lens \
   --dockerfile \
-  --basic-auth \
   --size=micro \
   --port=8080
 ```
 
 The build stage runs `go vet` and `go test` on `golang:1.27-alpine`. A failing test fails the deploy. The runtime image is `gcr.io/distroless/static-debian12:nonroot`. For reproducible builds, run `tools/pin-images.sh` (needs Docker): it pins both base images to their current digests in the Dockerfile. Run it again to pick up base-image patches, then commit.
 
-`.deploio.yaml` sets the same defaults: `size: micro`, `port: 8080`, `enableBasicAuth: true` and a health probe on `/healthz`. Settings changed in Cockpit or with `nctl` take precedence over the file. Deploio checks app health with a TCP probe on the port by default. If your platform version doesn't support the `healthProbe` field, the TCP probe still applies and `/healthz` stays available for external monitoring.
+`.deploio.yaml` sets the same defaults: `size: micro`, `port: 8080`, `enableBasicAuth: false` and a health probe on `/healthz`. Settings changed in Cockpit or with `nctl` take precedence over the file. Deploio checks app health with a TCP probe on the port by default. If your platform version doesn't support the `healthProbe` field, the TCP probe still applies and `/healthz` stays available for external monitoring.
 
-**Basic-auth credentials**
+**Login (optional)**
 
-```sh
-nctl get app budget-lens --basic-auth-credentials   # show user and password
-nctl update app budget-lens --change-basic-auth-password   # rotate
-```
+Basic auth is off. To put Deploio's login in front of the app, set `enableBasicAuth: true` in `.deploio.yaml` (or run `nctl update app budget-lens --basic-auth`), then get the credentials with `nctl get app budget-lens --basic-auth-credentials`.
 
 **Custom domain**
 

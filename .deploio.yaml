@@ -3,9 +3,9 @@
 size: micro
 port: 8080
 replicas: 1
-# Protect the app with Deploio's ingress basic auth. Credentials:
-#   nctl get app budget-lens --basic-auth-credentials
-enableBasicAuth: true
+# No login in front of the app. Files never leave the browser, so the server holds no data.
+# To require a login again: set this to true (credentials: nctl get app budget-lens --basic-auth-credentials).
+enableBasicAuth: false
 # HTTP health check. The server answers GET/HEAD /healthz with 200 "ok".
 healthProbe:
   path: /healthz
