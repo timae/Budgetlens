@@ -37,7 +37,7 @@ export function goalMonthly(goal, start) {
  * }
  */
 export function buildForecast(input) {
-  const { start, months, balance = 0, buffer = 0, contributions = [], otherIncome = 0, variable = 0, fixed = [], goals = [] } = input;
+  const { start, months, balance = 0, buffer = 0, contributions = [], otherIncome = 0, variable = 0, fixed = [], goals = [], due = [] } = input;
   const end = addMonths(start, Math.max(1, months) - 1);
   const range = monthRange(start, end);
   const contrib = contributions.reduce((s, c) => s + (Number(c.monthly) || 0), 0);
@@ -47,6 +47,8 @@ export function buildForecast(input) {
     if (f.amount == null || !(f.amount > 0)) continue;
     for (const m of fixedSchedule(f, start, end)) fixedBy.get(m).push({ payee: f.payee, amount: f.amount });
   }
+  // Extra payments in given months (costs entered by hand): [{ payee, month, amount }].
+  for (const d of due) if (fixedBy.has(d.month) && d.amount > 0) fixedBy.get(d.month).push({ payee: d.payee, amount: d.amount });
   const goalPlans = goals.map((g) => ({ ...g, ...goalMonthly(g, start) }));
 
   let bal = balance;

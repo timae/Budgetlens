@@ -34,6 +34,7 @@ export function saveSettings(s) {
     excluded: [...s.excluded],
     rules: s.ruleEntries.map(([category, keywords]) => ({ category, keywords })),
     useFileCategories: !!s.useFileCategories,
+    manualItems: (s.manualItems || []).map((m) => ({ name: m.name, category: m.category, amount: m.amount, every: m.every, start: m.start, end: m.end || '', person: m.person || '', currency: m.currency })),
     plan: s.plan ? {
       scope: s.plan.scope, horizon: s.plan.horizon, balance: s.plan.balance, buffer: s.plan.buffer, variable: s.plan.variable, otherIncome: s.plan.otherIncome,
       contributions: s.plan.contributions, goals: s.plan.goals, splitMode: s.plan.splitMode, weights: [...s.plan.weights].map(([name, value]) => ({ name, value })),
@@ -131,7 +132,11 @@ export function loadSettings(text) {
       weights: new Map(arr(p.weights).slice(0, 12).filter((w) => isObj(w) && str(w.name, 40) && num(w.value) != null).map((w) => [str(w.name, 40), num(w.value)])),
     };
   }
+  const ym = (v) => (typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? v : '');
+  const manualItems = arr(d.manualItems).slice(0, 100).filter((m) => isObj(m) && str(m.name, 60) && num(m.amount) > 0 && [0, 1, 2, 3, 6, 12].includes(m.every) && ym(m.start) && cur(m.currency))
+    .map((m) => ({ name: str(m.name, 60), category: str(m.category, LIMITS.maxCategoryLength) || 'Other', amount: num(m.amount), every: m.every, start: ym(m.start), end: ym(m.end) && ym(m.end) >= ym(m.start) ? ym(m.end) : '', person: str(m.person, 40), currency: m.currency }));
   return {
+    manualItems,
     plan,
     notes, budgetEdits, cardOwners, accountSettings, payeeRules, categoryAliases, ownNames, fixedOverrides, fixedManual, excluded,
     rules: rules.length ? rules : null,

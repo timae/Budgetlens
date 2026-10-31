@@ -125,7 +125,7 @@ On phones, wide tables you edit (budgets, accounts, cards, fixed costs, categori
 | **Overview** | Total spent, monthly average, fixed costs per month, budget variance and month-over-month change; month-by-month chart; top categories, fixed costs, budget and people at a glance. |
 | **Spending** | Treemap with drill-down: categories → payees → one payee's payments. A detail panel shows totals, average per month, share, fixed part and budget status at each level. Select any month in the chart to narrow everything to that month. Category include/exclude toggles, period comparison and the percentage calculator live here too. |
 | **Budget** | Budget vs actual per category with editable monthly budgets. |
-| **Fixed costs** | Detected and declared recurring payments (see below). |
+| **Fixed costs** | Detected and declared recurring payments, and costs paid outside the loaded accounts (see below). |
 | **Forecast & goals** | Month-by-month balance forecast for one account or all of them, with savings goals and the amount that has to be paid in, split between people. |
 | **People & accounts** | Spending per person, account types and owners, card owners. |
 | **Transactions** | Searchable, sortable list. The drill-down from other pages arrives as removable filter chips; *Fixed costs only* shows the recurring part. |
@@ -186,6 +186,15 @@ The file contains no transactions. It does hold names, IBANs, card endings, paye
 Settings files from the first version still load. Their account names can't be carried over, because they were tied to file names; the app says so.
 
 The loader treats the file as untrusted. It is limited to 1 MB and accepts only the expected shape. IBAN, card and key formats are checked, and every string is cleaned and limited in length. Values go into `Map`s, so `__proto__` and similar keys cannot pollute objects. The tab asks for confirmation before closing while there are unsaved settings.
+
+## Costs not in your files
+
+Some costs are paid from an account you haven't loaded, in cash or by salary deduction: gym, public transport, taxes, a car insurance paid by one partner. Add them under *Fixed costs → Costs not in your files* (also in the guided setup). Each has a name, a category, an amount, a rhythm (monthly, every 2 months, quarterly, half-yearly, yearly or once), a first month, an optional last month and who pays it. Quick-add buttons fill in typical ones.
+
+- **Totals:** they count in categories, totals, budgets and per person as a monthly share, so a yearly tax of 6000 counts as 500 every month and doesn't spike one month. One-off costs count in their month.
+- **Where they show:** they appear as the account *Not in files*, so you can filter them, and are part of the fixed-cost figure.
+- **Forecast:** they count for *All accounts*, in the months they are actually due. A single-account forecast leaves them out, because they are not paid from that account.
+- **Settings file:** they are saved in it.
 
 ## Forecast & goals
 

@@ -673,3 +673,8 @@ table.data.compact td { padding: 4px 6px; }
 .legend .line-key.line-b { border-top: 3px dotted var(--n50); }
 table.data tr.low th, table.data tr.low td { background: color-mix(in srgb, var(--bad) 8%, transparent); }
 #plan-goals input, #plan-contrib input { min-width: 90px; }
+
+/* Costs not in the files */
+.manual .btn-row { margin-top: 10px; }
+#manual-table input { min-width: 80px; }
+#manual-table td:nth-child(1) input { min-width: 140px; }

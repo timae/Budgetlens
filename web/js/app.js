@@ -17,6 +17,7 @@ import { CADENCES, detectRecurring, fixedCosts, fixedKey, fixedStatus, markFixed
 import { loadSettings, saveSettings, MAX_SETTINGS_BYTES } from './settings.js';
 import { SPLIT_MODES, buildForecast, planBaseline, splitContribution } from './forecast.js';
 import { addMonths } from './dates.js';
+import { MANUAL_RHYTHMS, manualDue, manualMonthly, manualTransactions } from './manual.js';
 
 const VIEWS = [
   ['overview', 'Overview'],
@@ -59,6 +60,7 @@ const state = {
   categoryAliases: new Map(), // normalised file category -> category
   ownNames: '', // words that identify transfers between own accounts
   coverage: new Map(),
+  manualItems: [], // costs paid outside the loaded accounts: {name, category, amount, every, start, end, person, currency}
   // Forecast & goals. null = use what the data shows.
   plan: { scope: '', horizon: 12, balance: null, buffer: 0, variable: null, otherIncome: null, contributions: null, goals: [], splitMode: 'current', weights: new Map() },
   cardOwners: new Map(),
@@ -179,6 +181,7 @@ function applySettings(s) {
   }
   state.useFileCategories = s.useFileCategories;
   if (s.plan) state.plan = s.plan;
+  state.manualItems = s.manualItems || [];
 }
 
 function runFile(f, defaultMonth) {
@@ -250,7 +253,14 @@ function recompute() {
   txs = assignPeople(d.txs, { cardOwners: state.cardOwners, accountOfFile: (i) => clusterById.get(of[i]) || { name: state.okFiles[i].result.name, kind: 'shared', owner: '' } });
   txs = markOwnTransfers(txs, ownNameList());
   state.fixed = fixedCosts(detectRecurring(txs), state.fixedOverrides, state.fixedManual);
-  state.txs = markFixed(txs, state.fixed);
+  txs = markFixed(txs, state.fixed);
+  // Costs entered by hand, as monthly shares in the months each currency has data for.
+  const manual = [];
+  for (const cur of new Set(state.manualItems.map((m) => m.currency))) {
+    const ms = [...new Set(txs.filter((t) => t.currency === cur && !t.synthetic).map((t) => t.month))].sort();
+    if (ms.length) manual.push(...manualTransactions(state.manualItems.filter((m) => m.currency === cur), ms));
+  }
+  state.txs = [...txs, ...manual];
   state.fileBudgets = collectBudgets(ok);
   state.budgets = applyBudgetEdits(state.fileBudgets, state.budgetEdits);
   const cur = currencies(state.txs, state.budgets);
@@ -333,7 +343,7 @@ function renderAll() {
 
 // On phones, wide editable tables become one card per row. Each cell gets its column name as a
 // label, and explicit ARIA roles keep the table semantics when CSS changes the display.
-const STACKED = '#bva, #accounts, #cards, #fixed-active, #fixed-suggested, #fixed-dismissed, #uncategorised, #aliases, #people-summary, #payee-rules, #plan-contrib, #plan-goals, #plan-split';
+const STACKED = '#bva, #accounts, #cards, #fixed-active, #fixed-suggested, #fixed-dismissed, #uncategorised, #aliases, #people-summary, #payee-rules, #plan-contrib, #plan-goals, #plan-split, #manual-table';
 function stackTables() {
   for (const table of document.querySelectorAll(STACKED)) {
     table.classList.add('stack');
@@ -388,7 +398,8 @@ function hero(a) {
   const c = a.currency, t = a.totals;
   const period = !a.from ? 'No dated rows' : a.from === a.to ? monthLabel(a.from) : `${monthLabel(a.from)} \u2013 ${monthLabel(a.to)}`;
   const fx = activeFixed();
-  const fixedMonthly = fx.reduce((s, f) => s + (f.monthly || 0), 0);
+  const man = state.manualItems.filter((m) => m.currency === c && m.every > 0 && m.amount > 0);
+  const fixedMonthly = fx.reduce((s, f) => s + (f.monthly || 0), 0) + man.reduce((s, m) => s + manualMonthly(m), 0);
   const partial = a.partialMonths.map((p) => `${monthLabel(p.month)} incomplete (days ${p.from}\u2013${p.to})`).join(' \u00B7 ');
   const avgSub = a.fullMonths.length
     ? `average of ${a.fullMonths.length} complete month${a.fullMonths.length === 1 ? '' : 's'}${partial ? ` \u00B7 ${partial}` : ''}`
@@ -396,7 +407,7 @@ function hero(a) {
   const items = [
     figure('Total spent', [curSpan(c), money0(t.spent)], `${period}${t.income ? ` \u00B7 income ${money0(t.income)}` : ''}`),
     figure('Monthly average', [curSpan(c), money0(t.avgMonthly)], avgSub),
-    figure('Fixed costs', [curSpan(c), money0(fixedMonthly)], fx.length ? `expected per month \u00B7 ${fx.length} recurring \u00B7 paid in period ${money0(t.fixed)}` : 'None confirmed yet'),
+    figure('Fixed costs', [curSpan(c), money0(fixedMonthly)], fx.length + man.length ? `expected per month \u00B7 ${fx.length + man.length} recurring${man.length ? ` (${man.length} not in files)` : ''} \u00B7 in period ${money0(t.fixed)}` : 'None confirmed yet'),
   ];
   if (t.budget > 0) {
     const over = t.variance < 0;
@@ -775,7 +786,8 @@ function fixedTables({ compact = false } = {}) {
 }
 
 function renderFixedView() {
-  return section('Fixed costs', 'Payments that come back at a steady rhythm with a steady amount are detected automatically: rent, insurance, childcare, subscriptions. Confirm, adjust or add your own. Payments within 15% (or 5) of the expected amount count as fixed.', fixedTables());
+  return h('div', {}, section('Fixed costs', 'Payments that come back at a steady rhythm with a steady amount are detected automatically: rent, insurance, childcare, subscriptions. Confirm, adjust or add your own. Payments within 15% (or 5) of the expected amount count as fixed.', fixedTables()),
+    section('Costs not in your files', 'Paid from an account you have not loaded, in cash or by salary deduction: gym, public transport, taxes. They count in categories, totals, budgets and per person as a monthly share (a yearly 6000 counts 500 a month), and in the forecast for all accounts in the months they are due.', manualEditor()));
 }
 
 // ---------- forecast & goals ----------
@@ -811,6 +823,8 @@ function planModel() {
     contributions: p.contributions ?? baseline.contributions,
     fixed: fixed.map((f) => ({ payee: f.payee, amount: f.amount, every: f.every, next: f.next })),
     goals: p.goals,
+    // Costs outside the files are paid from other accounts: only part of the all-accounts forecast.
+    due: p.scope ? [] : state.manualItems.filter((x) => x.currency === c).flatMap((x) => manualDue(x, start, addMonths(start, p.horizon - 1)).map((d) => ({ ...d, payee: x.name }))),
   };
   const forecast = buildForecast(inputs);
   const needed = buildForecast({ ...inputs, contributions: [{ name: 'needed', monthly: forecast.required }] });
@@ -936,13 +950,57 @@ function renderPlanView() {
 
   return h('div', {},
     peopleLists(),
-    section('Forecast & goals', `From ${monthLabel(f.start)} to ${monthLabel(f.end)} for ${p.scope || 'all accounts'}. Fixed costs are placed in the months they are due (${m.fixed.length} confirmed, ${money0(f.fixedMonthly)} a month on average); other spending and income come from your complete months.`,
+    section('Forecast & goals', `From ${monthLabel(f.start)} to ${monthLabel(f.end)} for ${p.scope || 'all accounts'}. Fixed costs are placed in the months they are due (${m.fixed.length} confirmed${p.scope ? '' : `, plus ${state.manualItems.filter((x) => x.currency === c).length} not in files`}, ${money0(f.fixedMonthly)} a month on average); other spending and income come from your complete months.${p.scope && state.manualItems.length ? ' Costs not in your files are left out here because they are paid from other accounts; choose All accounts to include them.' : ''}`,
       inputsPanel),
     section('What needs to be paid in', null, results),
     section('Balance month by month', 'Two lines: with today\u2019s contributions, and with the amount needed. The dashed line is the minimum you want to keep.', chart, h('div', { class: 'legend' },
       h('span', {}, h('span', { class: 'line-key line-a' }), 'With today\u2019s contributions'),
       h('span', {}, h('span', { class: 'line-key line-b' }), `Paying in ${money0(f.required)} a month`),
       h('span', {}, h('span', { class: 'budget-key' }), 'Minimum')), table));
+}
+
+// ---------- costs not in the files ----------
+const MANUAL_PRESETS = [
+  ['Gym', 'Leisure & travel', 1], ['Public transport', 'Transport', 1], ['Taxes', 'Taxes & fees', 12],
+  ['Health insurance', 'Health', 1], ['Phone', 'Utilities & telecom', 1], ['Car insurance', 'Insurance', 12],
+];
+
+function addManual(name = 'New cost', category = OTHER, every = 1) {
+  const latest = state.txs.filter((t) => !t.manual).reduce((m, t) => (t.date > m ? t.date : m), '');
+  const first = state.txs.filter((t) => !t.manual && t.currency === state.currency).reduce((m, t) => (!m || t.date < m ? t.date : m), '');
+  state.manualItems = [...state.manualItems, { name, category, amount: 0, every, start: (every === 12 ? latest : first || latest || new Date().toISOString()).slice(0, 7), end: '', person: '', currency: state.currency }].slice(0, 100);
+  keepFocus(`man-amt-${state.manualItems.length - 1}`, recompute);
+}
+
+function manualEditor() {
+  const items = state.manualItems.map((m, i) => [m, i]).filter(([m]) => m.currency === state.currency);
+  const set = (i, patch, id) => keepFocus(id, () => { state.manualItems = state.manualItems.map((x, j) => (j === i ? { ...x, ...patch } : x)); recompute(); });
+  const monthly = items.reduce((s, [m]) => s + manualMonthly(m), 0);
+  return h('div', { class: 'manual' },
+    h('datalist', { id: 'manual-cats' }, knownCategories().map((x) => option(x, x))),
+    peopleLists(),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'manual-table' },
+      h('caption', { class: 'sr-only', text: `Costs paid outside the loaded accounts, ${state.currency}` }),
+      h('thead', {}, h('tr', {}, th('Cost'), th('Category'), th(`Amount (${state.currency})`, 'num'), th('Rhythm'), th('From'), th('Until'), th('Paid by'), th('Per month', 'num'), h('th', { attrs: { scope: 'col' } }, h('span', { class: 'sr-only', text: 'Actions' })))),
+      h('tbody', {}, items.length ? items.map(([m, i]) => h('tr', {},
+        h('td', {}, h('input', { type: 'text', id: `man-name-${i}`, value: m.name, attrs: { maxlength: 60, autocomplete: 'off', 'aria-label': `Name of cost ${i + 1}` }, on: { change: (e) => set(i, { name: cleanText(e.target.value, 60) || m.name }, `man-name-${i}`) } })),
+        h('td', {}, h('input', { type: 'text', id: `man-cat-${i}`, value: m.category, attrs: { list: 'manual-cats', maxlength: LIMITS.maxCategoryLength, autocomplete: 'off', 'aria-label': `Category of ${m.name}` }, on: { change: (e) => set(i, { category: cleanText(e.target.value, LIMITS.maxCategoryLength) || OTHER }, `man-cat-${i}`) } })),
+        h('td', { class: 'num' }, h('span', { class: 'budget-input' }, h('input', { type: 'text', id: `man-amt-${i}`, value: m.amount ? String(m.amount) : '', attrs: { inputmode: 'decimal', maxlength: 14, autocomplete: 'off', placeholder: '0', 'aria-label': `Amount of ${m.name} per payment` },
+          on: { change: (e) => { const v = parseBudgetInput(e.target.value); if (Number.isNaN(v)) { setStatus('Enter an amount like 89 or 1234.50.', true); return; } set(i, { amount: v ?? 0 }, `man-amt-${i}`); } } }))),
+        h('td', {}, h('select', { id: `man-every-${i}`, attrs: { 'aria-label': `How often ${m.name} is paid` }, on: { change: (e) => set(i, { every: Number(e.target.value) }, `man-every-${i}`) } }, [...MANUAL_RHYTHMS].map(([v, l]) => option(String(v), l, v === m.every)))),
+        h('td', {}, h('input', { type: 'text', id: `man-start-${i}`, value: m.start, attrs: { maxlength: 7, placeholder: 'YYYY-MM', autocomplete: 'off', 'aria-label': `${m.every === 0 ? 'Month' : 'First month'} of ${m.name}` },
+          on: { change: (e) => { const v = e.target.value.trim(); if (/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) set(i, { start: v }, `man-start-${i}`); else e.target.value = m.start; } } })),
+        h('td', {}, m.every === 0 ? h('span', { class: 'muted', text: '\u2013' }) : h('input', { type: 'text', id: `man-end-${i}`, value: m.end, attrs: { maxlength: 7, placeholder: 'open', autocomplete: 'off', 'aria-label': `Last month of ${m.name} (empty: no end)` },
+          on: { change: (e) => { const v = e.target.value.trim(); if (!v || (/^\d{4}-(0[1-9]|1[0-2])$/.test(v) && v >= m.start)) set(i, { end: v }, `man-end-${i}`); else e.target.value = m.end; } } })),
+        h('td', {}, h('input', { type: 'text', id: `man-person-${i}`, value: m.person, attrs: { list: 'people-list', maxlength: 40, autocomplete: 'off', placeholder: 'Shared', 'aria-label': `Who pays ${m.name}` }, on: { change: (e) => set(i, { person: cleanPerson(e.target.value) }, `man-person-${i}`) } })),
+        h('td', { class: 'num', text: m.every ? money(manualMonthly(m)) : 'once' }),
+        h('td', {}, h('button', { type: 'button', class: 'btn small', text: 'Remove', attrs: { 'aria-label': `Remove ${m.name}` }, on: { click: () => { state.manualItems = state.manualItems.filter((_, j) => j !== i); recompute(); } } }))))
+        : h('tr', {}, h('td', { attrs: { colspan: 9 }, class: 'empty', text: 'Nothing added yet.' }))),
+      items.length ? h('tfoot', {}, h('tr', {}, h('td', { attrs: { colspan: 7 }, text: 'Total per month' }), h('td', { class: 'num', text: money(monthly) }), h('td', {}))) : null)),
+    h('div', { class: 'btn-row' },
+      h('button', { type: 'button', class: 'btn small primary', id: 'man-add', text: 'Add a cost', on: { click: () => addManual() } }),
+      h('span', { class: 'muted', text: 'Quick add:' }),
+      MANUAL_PRESETS.map(([n, c, e]) => h('button', { type: 'button', class: 'btn small', text: n, attrs: { 'aria-label': `Add ${n}` }, on: { click: () => addManual(n, c, e) } }))));
 }
 
 // ---------- budget ----------
@@ -1486,6 +1544,9 @@ function renderSetup() {
     fixed: () => [
       h('p', { class: 'lead', text: 'These payments come back at a steady rhythm. Confirm which ones are fixed costs; you can change this later.' }),
       fixedTables({ compact: true }),
+      h('h3', { class: 'sub-head', text: 'Costs not in your files' }),
+      h('p', { class: 'note', text: 'Anything paid from an account you have not loaded: gym, public transport, taxes. Add them so totals and the forecast are complete.' }),
+      manualEditor(),
     ],
     budget: () => state.last ? [
       h('p', { class: 'lead', text: 'Set a monthly budget per category, or let Budget Lens suggest one from your average spending. You can skip this.' }),
@@ -1570,6 +1631,7 @@ function clearAll() {
     fixedOverrides: new Map(), fixedManual: new Map(), person: '', account: '', preset: 'all', txSearch: '',
     excluded: new Set([TRANSFERS]), drill: { category: null, payee: null, month: null },
     plan: { scope: '', horizon: 12, balance: null, buffer: 0, variable: null, otherIncome: null, contributions: null, goals: [], splitMode: 'current', weights: new Map() },
+    manualItems: [],
   });
   history.replaceState(null, '', location.pathname);
   state.view = 'overview';
@@ -1632,7 +1694,7 @@ function init() {
 
   // Nothing is stored: warn before the tab forgets the user's setup.
   window.addEventListener('beforeunload', (e) => {
-    if (state.files.length && (state.budgetEdits.size || state.cardOwners.size || state.accountSettings.length || state.payeeRules.size || state.categoryAliases.size || state.fixedOverrides.size || state.fixedManual.size || state.plan.goals.length || state.plan.weights.size)) { e.preventDefault(); e.returnValue = ''; }
+    if (state.files.length && (state.budgetEdits.size || state.cardOwners.size || state.accountSettings.length || state.payeeRules.size || state.categoryAliases.size || state.fixedOverrides.size || state.fixedManual.size || state.plan.goals.length || state.plan.weights.size || state.manualItems.length)) { e.preventDefault(); e.returnValue = ''; }
   });
 
   // Redraw size-dependent charts when the layout width changes.

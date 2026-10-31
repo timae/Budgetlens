@@ -214,6 +214,23 @@ await setInput('#fx-amt-0', '2000');
 await sleep(300);
 check('expected amount is editable', (await js("return document.querySelector('#fx-amt-0').value")) === '2000');
 
+// Costs not in the files
+await js("location.hash = 'overview'");
+await waitFor("document.querySelector('#main .figure .value')");
+const spentBefore = Number((await js("return document.querySelector('#main .figure .value').textContent")).replace(/[^0-9]/g, ''));
+await js("location.hash = 'fixed'");
+await waitFor("document.querySelector('#manual-table')");
+await js("[...document.querySelectorAll('.manual .btn-row button')].find(b => b.textContent === 'Gym').click()");
+await sleep(300);
+await setInput('#man-amt-0', '90');
+await sleep(300);
+check('a cost outside the files can be added', await js("return document.querySelectorAll('#manual-table tbody tr').length === 1 && document.querySelector('#man-amt-0').value === '90'"));
+await js("location.hash = 'overview'");
+await waitFor("document.querySelector('#main .figure .value')");
+const spentAfter = Number((await js("return document.querySelector('#main .figure .value').textContent")).replace(/[^0-9]/g, ''));
+check('it counts in the totals', spentAfter > spentBefore, `${spentBefore} -> ${spentAfter}`);
+check('it appears as its own account', await js("return [...document.querySelectorAll('#account option')].some(o => o.value === 'Not in files')"));
+
 // Forecast & goals
 await js("location.hash = 'plan'");
 check('forecast page with balance chart and month table', await waitFor("document.querySelectorAll('#plan-months tbody tr').length === 12 && document.querySelectorAll('#plan-chart path.bal-line').length === 2"));

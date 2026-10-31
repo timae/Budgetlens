@@ -240,6 +240,21 @@
     "detail": ""
   },
   {
+    "name": "a cost outside the files can be added",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "it counts in the totals",
+    "ok": true,
+    "detail": "41088 -> 41628"
+  },
+  {
+    "name": "it appears as its own account",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "forecast page with balance chart and month table",
     "ok": true,
     "detail": ""
@@ -247,17 +262,17 @@
   {
     "name": "a savings goal raises the amount to pay in",
     "ok": true,
-    "detail": "5869 -> 6869"
+    "detail": "5959 -> 6959"
   },
   {
     "name": "split: equal shares",
     "ok": true,
-    "detail": "3’434 / 3’435"
+    "detail": "3’479 / 3’480"
   },
   {
     "name": "split: by net income (3:1)",
     "ok": true,
-    "detail": "5152 / 1717"
+    "detail": "5219 / 1740"
   },
   {
     "name": "minimum balance is respected",
@@ -427,7 +442,7 @@
   {
     "name": "fixed: controls named, ids unique, headings, table headers",
     "ok": true,
-    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":1,\"tablesWithoutHeaders\":0}"
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":2,\"tablesWithoutHeaders\":0}"
   },
   {
     "name": "desktop plan: no horizontal overflow",
