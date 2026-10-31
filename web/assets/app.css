@@ -678,3 +678,6 @@ table.data tr.low th, table.data tr.low td { background: color-mix(in srgb, var(
 .manual .btn-row { margin-top: 10px; }
 #manual-table input { min-width: 80px; }
 #manual-table td:nth-child(1) input { min-width: 140px; }
+
+.mini-list .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--rule-2); border-radius: 999px; font-size: 0.72rem; color: var(--ink-2); vertical-align: 1px; }
+.mini-list li.total { border-bottom: 0; font-weight: 650; }

@@ -229,6 +229,7 @@ await js("location.hash = 'overview'");
 await waitFor("document.querySelector('#main .figure .value')");
 const spentAfter = Number((await js("return document.querySelector('#main .figure .value').textContent")).replace(/[^0-9]/g, ''));
 check('it counts in the totals', spentAfter > spentBefore, `${spentBefore} -> ${spentAfter}`);
+check('it is listed in the overview fixed costs', await js("return [...document.querySelectorAll('#main .card')].find(c => c.querySelector('.card-title').textContent === 'Fixed costs').textContent.includes('Gym')"));
 check('it appears as its own account', await js("return [...document.querySelectorAll('#account option')].some(o => o.value === 'Not in files')"));
 
 // Forecast & goals

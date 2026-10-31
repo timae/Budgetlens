@@ -250,6 +250,11 @@
     "detail": "41088 -> 41628"
   },
   {
+    "name": "it is listed in the overview fixed costs",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "it appears as its own account",
     "ok": true,
     "detail": ""

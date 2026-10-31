@@ -390,6 +390,15 @@ function figure(label, value, sub, cls) {
   return h('div', { class: 'figure' }, h('span', { class: 'label', text: label }), h('span', { class: ['value', cls] }, value), h('span', { class: 'sub' }, sub));
 }
 
+/** All recurring costs per month in the current currency: from the files and entered by hand. */
+function allFixed() {
+  const c = state.currency;
+  const fromFiles = activeFixed().map((f) => ({ payee: f.payee, monthly: f.monthly || 0, outside: false }));
+  const byHand = state.manualItems.filter((m) => m.currency === c && m.every > 0 && m.amount > 0).map((m) => ({ payee: m.name, monthly: manualMonthly(m), outside: true }));
+  const rows = [...fromFiles, ...byHand].sort((a, b) => b.monthly - a.monthly);
+  return { rows, total: rows.reduce((x, r) => x + r.monthly, 0), outside: byHand.length };
+}
+
 function activeFixed() {
   return state.fixed.filter((f) => f.active && f.currency === state.currency);
 }
@@ -427,7 +436,7 @@ function renderOverview() {
   afterRender.push(() => monthlyChart(chart, legend, a, { onSelect: (m) => drillTo({ month: m }) }));
   const top = a.categories.filter((x) => x.included && x.spent > 0).slice(0, 7);
   const max = top[0]?.spent || 1;
-  const fx = activeFixed().slice(0, 5);
+  const fx = allFixed();
   const over = a.categories.filter((x) => x.included && x.status === 'over').slice(0, 5);
   const people = personSummary(viewTxs().filter(inPeriod), state.excluded);
   return h('div', {},
@@ -442,7 +451,11 @@ function renderOverview() {
           h('span', { class: 'barlist-bar', attrs: { 'aria-hidden': 'true' } }, h('span', { class: ['bar-fill', colorOf(x.name)], css: { width: `${(x.spent / max) * 100}%` } }))))),
         link('All categories \u2192', 'spending')),
       card('Fixed costs',
-        fx.length ? h('ul', { class: 'mini-list' }, fx.map((f) => h('li', {}, h('span', { text: f.payee }), h('span', { class: 'num', text: `${money0(f.monthly ?? 0)} / month` })))) : h('p', { class: 'note', text: 'No recurring payments confirmed yet.' }),
+        fx.rows.length ? h('ul', { class: 'mini-list' },
+          fx.rows.slice(0, 6).map((f) => h('li', {}, h('span', {}, f.payee, f.outside ? h('span', { class: 'tag', text: 'not in files' }) : null), h('span', { class: 'num', text: `${money0(f.monthly)} / month` }))),
+          fx.rows.length > 6 ? h('li', { class: 'muted' }, h('span', { text: `${fx.rows.length - 6} more` }), h('span', { class: 'num', text: `${money0(fx.rows.slice(6).reduce((x, r) => x + r.monthly, 0))} / month` })) : null,
+          h('li', { class: 'total' }, h('span', { text: 'Total' }), h('span', { class: 'num', text: `${money0(fx.total)} / month` })))
+          : h('p', { class: 'note', text: 'No recurring payments confirmed yet.' }),
         link('Review fixed costs \u2192', 'fixed')),
       card('Budget',
         a.totals.budget > 0
@@ -774,9 +787,9 @@ function fixedTables({ compact = false } = {}) {
 
   return h('div', { class: 'fixed-block' },
     h('div', { class: 'stats wide' },
-      stat('Fixed per month', `${c} ${money0(monthly)}`),
-      stat('Per year', money0(monthly * 12)),
-      stat('Recurring payments', String(active.length)),
+      stat('Fixed per month', `${c} ${money0(allFixed().total)}`),
+      stat('Per year', money0(allFixed().total * 12)),
+      stat('Recurring payments', `${active.length}${allFixed().outside ? ` + ${allFixed().outside} not in files` : ''}`),
       stat('Overdue', String(missing.length), missing.length ? 'bad' : ''),
       stat('Paid in period', money0([...paid.values()].reduce((x, y) => x + y, 0)))),
     activeTable,
