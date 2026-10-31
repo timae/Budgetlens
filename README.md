@@ -2,7 +2,11 @@
 
 Drop one or more CSV files (bank exports or budget sheets) and see where the money goes, how it compares to budget and how it changes over time. Everything runs in the browser; the server only hands out static files.
 
-![Dashboard](docs/desktop-light.jpg)
+![Overview](docs/desktop-light.jpg)
+
+![Guided setup](docs/setup.jpg)
+
+![Spending drill-down](docs/spending.jpg)
 
 ## Security model
 
@@ -67,7 +71,7 @@ node tools/e2e.mjs --url http://127.0.0.1:8080 \
   --chrome "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"   # headless browser checks
 ```
 
-`tools/e2e.mjs` drives Chrome over the DevTools protocol with no dependencies. It checks that the app starts empty, generates test files from `test/fixtures/sample.js` and drops them into the file input, then exercises the dashboard: focus, filters, sorting, search, currency switch, per-file settings, rules, budget editing, card and account assignment, the person filter and exports. It also:
+`tools/e2e.mjs` drives Chrome over the DevTools protocol with no dependencies. It checks that the app starts empty, generates test files from `test/fixtures/sample.js` and drops them into the file input, then walks through the guided setup (accounts, cards, fixed costs, budgets), every page of the navigation, the drill-down from month to category to payee to transactions, fixed-cost confirmation and declaration, filters, sorting, search, the currency switch, per-file settings, rules, restoring a settings file and the exports. It also:
 
 - Loads a CSV full of XSS, formula and bidi payloads and checks that nothing executes and nothing renders as HTML.
 - Confirms Trusted Types and CSP block `innerHTML`, `fetch` and external images.
@@ -113,11 +117,56 @@ Every detected setting can be changed per file under *Detected settings and prev
 
 **Currencies** are never converted. The dashboard shows one currency at a time.
 
+## Pages
+
+| Page | What it shows |
+| --- | --- |
+| **Overview** | Total spent, monthly average, fixed costs per month, budget variance and month-over-month change; month-by-month chart; top categories, fixed costs, budget and people at a glance. |
+| **Spending** | Treemap with drill-down: categories → payees → one payee's payments. A detail panel shows totals, average per month, share, fixed part and budget status at each level. Select any month in the chart to narrow everything to that month. Category include/exclude toggles, period comparison and the percentage calculator live here too. |
+| **Budget** | Budget vs actual per category with editable monthly budgets. |
+| **Fixed costs** | Detected and declared recurring payments (see below). |
+| **People & accounts** | Spending per person, account types and owners, card owners. |
+| **Transactions** | Searchable, sortable list. The drill-down from other pages arrives as removable filter chips; *Fixed costs only* shows the recurring part. |
+| **Files & rules** | Add files, check and adjust every detected setting per file, edit category rules, save settings, clear everything. |
+
+Pages are addressed by the URL fragment (`#spending`, `#fixed` …), so the browser's back button works. The period, currency, account and person filters above the pages apply everywhere.
+
+## Guided setup
+
+Dropping the first files starts a six-step setup. Every step can be skipped and the setup can be re-run any time (*Guided setup*).
+
+1. **Check files.** What was detected per file: type, period, number of transactions and skipped rows. Each file opens to show its settings and a preview.
+2. **Accounts.** Name each account and mark it shared or individual, with an owner.
+3. **Cards & people.** Say who each card belongs to, and see the resulting spending per person.
+4. **Fixed costs.** Confirm or dismiss the recurring payments that were found.
+5. **Budgets.** Type monthly budgets, or let Budget Lens suggest them from average spending.
+6. **Done.** Save the settings file for next time.
+
+## Fixed costs
+
+Payments to the same payee are treated as a fixed cost when they come back at a steady rhythm with a steady amount. The rhythm can be monthly, every two months, quarterly, half-yearly or yearly. Each payee is checked on:
+
+- **Rhythm:** the typical gap between months with a payment, and how many gaps match it.
+- **Amount:** the median payment and its robust deviation. For a payee with one large and several small payments, like an insurance premium plus excess bills, the monthly main payment is used.
+- **Day of month:** how steady it is.
+- **Frequency:** payees paid several times in most months, like supermarkets, are never fixed costs.
+- **Category:** housing, insurance, utilities, childcare, subscriptions, health and taxes get a little more tolerance.
+
+Clear cases are confirmed automatically. Less certain ones, and anything seen in only two months, are listed as suggestions. You can confirm or dismiss each, change its rhythm and expected amount (empty = any amount), or declare any payee a fixed cost. Payments within 15% (at least 5) of the expected amount count as fixed. *Overdue* flags a fixed cost whose next payment is more than 10 days late compared to the newest data.
+
+Fixed costs show up as a figure in the overview, as the "fixed part" of each category and of each drill-down level, and as a filter and column in the transactions.
+
+## Settings file
+
+Nothing is stored in the browser. *Save settings* downloads `budget-lens-settings.json` with your accounts and their files, card owners, fixed-cost decisions, budgets, excluded categories and category rules. It contains no transactions. It does contain file names, account and person names, the last four digits of assigned cards, the payee names and expected amounts of fixed costs, and your budgets, so treat it as private. Drop the settings file in together with your CSV files next time to restore everything.
+
+The loader treats the file as untrusted. It is limited to 1 MB and accepts only the expected shape. Every string is cleaned and limited in length, and keys are checked. Values go into `Map`s, so `__proto__` and similar keys cannot pollute objects. The tab asks for confirmation before closing while there are unsaved settings.
+
 ## Budgets
 
 The *Budget vs actual* table has an editable **monthly budget** per category. A value typed there replaces any budget a file provides for that category; `0` removes it; an empty field falls back to the file. *Suggest from average spending* fills every category that has no budget with its monthly average, rounded up to the next 10. Monthly budgets are multiplied by the number of months in the selected period.
 
-Nothing is stored in the browser. *Download budget CSV* saves the current monthly budgets as `Category, Monthly budget`; drop that file in next time to start with the same budgets. The tab asks for confirmation before closing while there are unsaved budget, card or account settings.
+*Download budget CSV* saves the current monthly budgets as `Category, Monthly budget`, a file any spreadsheet can open and Budget Lens can load again. To keep everything else too, use *Save settings* (see below).
 
 ## People, cards and accounts
 
@@ -137,8 +186,9 @@ The app ships without any data: it starts empty and shows nothing until you add 
 main.go, server.go     static server (embed, allowlist, headers, gzip, ETag, healthz, redirect, shutdown)
 server_test.go         server and static front-end checks
 web/                   everything that is served
-  js/                  ES modules: csv, numbers, dates, detect, categorize, analyze, pipeline (no DOM), app/charts/dom (UI)
+  js/                  ES modules: csv, numbers, dates, detect, categorize, analyze, pipeline, people, budget,
+                       recurring, settings (no DOM, unit-tested); app, charts, dom, format (UI)
   assets/              CSS and the Archivo font
-test/                  node:test unit tests
+test/                  node:test unit tests; fixtures/sample.js generates made-up bank files for tests
 tools/e2e.mjs          headless-browser checks (dev only, not shipped)
 ```

@@ -1,0 +1,557 @@
+[
+  {
+    "name": "CSP header present and strict",
+    "ok": true,
+    "detail": "default-src 'none'; script-src 'self'; style-src 'self'; fon…"
+  },
+  {
+    "name": "header x-frame-options",
+    "ok": true,
+    "detail": "DENY"
+  },
+  {
+    "name": "header x-content-type-options",
+    "ok": true,
+    "detail": "nosniff"
+  },
+  {
+    "name": "header referrer-policy",
+    "ok": true,
+    "detail": "no-referrer"
+  },
+  {
+    "name": "header cross-origin-opener-policy",
+    "ok": true,
+    "detail": "same-origin"
+  },
+  {
+    "name": "header cross-origin-embedder-policy",
+    "ok": true,
+    "detail": "require-corp"
+  },
+  {
+    "name": "header strict-transport-security",
+    "ok": true,
+    "detail": "max-age=63072000; includeSubDomains"
+  },
+  {
+    "name": "header permissions-policy",
+    "ok": true,
+    "detail": "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), bluetooth=(), browsing-topics=(), camera=(), clipboard-read=(), clipboard-write=(), display-capture=(), document-domain=(), encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(), idle-detection=(), interest-cohort=(), local-fonts=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()"
+  },
+  {
+    "name": "header x-robots-tag",
+    "ok": true,
+    "detail": "noindex, nofollow, noarchive"
+  },
+  {
+    "name": "POST is rejected",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "healthz",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "page loads with title",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "font is self-hosted and loads",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "no storage or cookies used",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "starts empty: upload only, no sample data",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "adding files starts the guided setup",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup shows six steps and the files",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "step 2: accounts",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounts can be named, typed and owned",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "step 3: cards",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "assigning a card creates a person",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "step 4: fixed costs detected",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "rent, childcare, insurance and phone are fixed costs",
+    "ok": true,
+    "detail": "Immobilien Muster AG Mietzins, Kita Sonnenschein GmbH, Helsana, Wingo, Spotify"
+  },
+  {
+    "name": "a fixed cost can be dismissed",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "step 5: budgets",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "monthly budget can be edited per category",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "invalid budget is rejected with a message",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "suggest fills categories without a budget",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "step 6: done",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "finish opens the overview",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "navigation has all pages",
+    "ok": true,
+    "detail": "Overview|Spending|Budget|Fixed costs|People & accounts|Transactions|Files & rules"
+  },
+  {
+    "name": "overview shows figures, chart and cards",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "selecting a month drills into spending for that month",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "month filter can be removed",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "tile drills into a category",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "payee drill shows payee details",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "payee can be marked or unmarked as fixed cost",
+    "ok": true,
+    "detail": "Immobilien Muster AG Mietzins: Mark as fixed cost"
+  },
+  {
+    "name": "drill carries into transactions with filter chips",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "transactions match the drill",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "removing chips clears the drill",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "sorting transactions",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "search filters transactions",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "fixed-costs-only filter",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "fixed costs page",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "any payee can be declared a fixed cost",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "expected amount is editable",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "budget page keeps edits",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "people page shows people, accounts and cards",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "person filter applies across pages",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "compare table and calculator",
+    "ok": true,
+    "detail": "12 rows; Change from A to B+25%Absolute difference+20.00Percentage difference22.2%Ratio B / A1.250×"
+  },
+  {
+    "name": "currency switch shows EUR only",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "files page with rules and settings",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "changing a file setting re-parses",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "rules editor adds rule",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "settings file restores setup",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "XSS payloads do not execute",
+    "ok": true,
+    "detail": "{\"xss\":0,\"imgs\":0,\"scripts\":0,\"handlers\":0,\"links\":0,\"literal\":true,\"bold\":0,\"proto\":true,\"bidi\":false}"
+  },
+  {
+    "name": "payloads are shown as literal text",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "no prototype pollution from category names",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "bidi/zero-width characters stripped from UI",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "CSV export guards formula injection",
+    "ok": true,
+    "detail": "\"'=HYPERLINK(\"\"x\"\")\",\"'+1\",\"'@A\",-5"
+  },
+  {
+    "name": "zero CSP violations during normal use",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "zero uncaught errors",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Trusted Types blocks innerHTML",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "CSP blocks network requests",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "CSP blocks external images",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "desktop overview: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop overview: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "overview: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":1,\"tablesWithoutHeaders\":0}"
+  },
+  {
+    "name": "desktop spending: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop spending: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "spending: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":3,\"tablesWithoutHeaders\":0}"
+  },
+  {
+    "name": "desktop budget: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop budget: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "budget: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":1,\"tablesWithoutHeaders\":0}"
+  },
+  {
+    "name": "desktop fixed: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop fixed: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "fixed: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":1,\"tablesWithoutHeaders\":0}"
+  },
+  {
+    "name": "desktop people: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop people: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "people: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":3,\"tablesWithoutHeaders\":0}"
+  },
+  {
+    "name": "desktop transactions: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop transactions: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "transactions: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":1,\"tablesWithoutHeaders\":0}"
+  },
+  {
+    "name": "desktop files: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop files: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "files: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":2,\"tablesWithoutHeaders\":0}"
+  },
+  {
+    "name": "desktop setup: no horizontal overflow",
+    "ok": true,
+    "detail": "1280/1280 "
+  },
+  {
+    "name": "desktop setup: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":1,\"tablesWithoutHeaders\":0}"
+  },
+  {
+    "name": "desktop dark spending: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop dark spending: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "dark mode switches palette",
+    "ok": true,
+    "detail": "rgb(17, 19, 23)"
+  },
+  {
+    "name": "mobile overview: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile overview: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile spending: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile spending: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile budget: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile budget: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile fixed: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile fixed: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile people: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile people: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile transactions: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile transactions: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile files: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile files: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile setup: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile setup: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "print view hides controls",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "no CSP violations after the probes",
+    "ok": true,
+    "detail": "require-trusted-types-for trusted-types-sink Element innerHTML|<b>x</b> | connect-src http://127.0.0.1:8080/healthz  | img-src https://example.com/x.png "
+  },
+  {
+    "name": "still no uncaught errors",
+    "ok": true,
+    "detail": ""
+  }
+]

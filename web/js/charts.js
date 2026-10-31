@@ -17,7 +17,7 @@ export function drawTreemap(el, items, { currency, emptyText }) {
     const size = w < 38 || hh < 24 ? 'micro' : w < 84 || hh < 52 ? 'tiny' : '';
     const btn = h('button', {
       type: 'button',
-      class: ['tile', item.cls, size],
+      class: ['tile', ...[].concat(item.cls), size],
       attrs: { 'aria-label': `${item.name}: ${currency} ${money0(item.value)}, ${pct(share)} of spending.${item.hint ? ' ' + item.hint : ''}` },
       css: { left: `${(x / W) * 100}%`, top: `${(y / H) * 100}%`, width: `${(w / W) * 100}%`, height: `${(hh / H) * 100}%` },
       on: { click: item.onClick },
@@ -41,9 +41,9 @@ function niceStep(max, count = 4) {
  * Stacked monthly bars with dashed budget marks.
  * months: [{month, byCat: Map, total, budget}], series: [{name, cls}] (bottom to top), otherCls for the rest.
  */
-export function drawMonthly(el, months, series, { currency }) {
+export function drawMonthly(el, months, series, { currency, height, onSelect, selected } = {}) {
   const W = Math.max(320, el.clientWidth || 800);
-  const H = W < 560 ? 240 : 300;
+  const H = height || (W < 560 ? 240 : 300);
   const m = { l: 54, r: 10, t: 20, b: 30 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
   const maxV = Math.max(1, ...months.map((d) => Math.max(d.total, d.budget)));
@@ -80,6 +80,14 @@ export function drawMonthly(el, months, series, { currency }) {
         s('title', { text: `${monthLabel(d.month)} \u00B7 budget ${currency} ${money0(d.budget)}` })));
     }
     if (d.total > 0 && bw >= 30) svg.append(s('text', { class: 'total-label', attrs: { x: cx, y: Math.min(y(d.total), d.budget ? y(d.budget) : Infinity) - 6, 'text-anchor': 'middle' }, text: money0(d.total) }));
+    if (onSelect) {
+      const hit = s('rect', {
+        class: ['hit', d.month === selected ? 'sel' : ''],
+        attrs: { x: cx - band / 2 + 1, y: m.t, width: Math.max(2, band - 2), height: ih, tabindex: 0, role: 'button', 'aria-pressed': d.month === selected ? 'true' : 'false', 'aria-label': `${monthLabel(d.month)}: ${currency} ${money0(d.total)}. Show this month.` },
+        on: { click: () => onSelect(d.month), keydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(d.month); } } },
+      }, s('title', { text: `${monthLabel(d.month)} \u00B7 ${currency} ${money0(d.total)}` }));
+      svg.append(hit);
+    }
     if (i % labelEvery === 0) {
       const lab = i === 0 || d.month.endsWith('-01') ? `${monthTick(d.month)} ${d.month.slice(2, 4)}` : monthTick(d.month);
       svg.append(s('text', { class: 'tick', attrs: { x: cx, y: H - 10, 'text-anchor': 'middle' }, text: lab }));

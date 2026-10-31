@@ -79,7 +79,7 @@ export function analyze(allTxs, allBudgets, opts) {
   // Category totals.
   const cats = new Map();
   const cat = (name) => {
-    if (!cats.has(name)) cats.set(name, { name, spent: 0, count: 0, budget: 0, income: 0 });
+    if (!cats.has(name)) cats.set(name, { name, spent: 0, count: 0, budget: 0, income: 0, fixed: 0 });
     return cats.get(name);
   };
   let income = 0;
@@ -87,7 +87,10 @@ export function analyze(allTxs, allBudgets, opts) {
     const c = cat(t.category);
     c.count++;
     if (t.category === INCOME) { c.income += t.amount; income += t.amount; }
-    else c.spent -= t.amount;
+    else {
+      c.spent -= t.amount;
+      if (t.fixed) c.fixed -= t.amount;
+    }
   }
   // Budgets: undated entries recur each month of the range; dated entries count in their month.
   const budgetByMonth = new Map(range.map((m) => [m, new Map()]));
@@ -114,7 +117,7 @@ export function analyze(allTxs, allBudgets, opts) {
       const diff = r2(budget - spent);
       const pct = budget ? (spent - budget) / budget : null;
       const status = !budget ? 'none' : spent > budget * 1.005 ? 'over' : spent >= budget * 0.9 ? 'near' : 'under';
-      return { name: c.name, spent, budget, diff, pct, status, count: c.count, included: isSpending(c.name) };
+      return { name: c.name, spent, budget, diff, pct, status, count: c.count, fixed: r2(c.fixed), included: isSpending(c.name) };
     })
     .sort((a, b) => b.spent - a.spent || a.name.localeCompare(b.name));
   const included = categories.filter((c) => c.included);
@@ -162,6 +165,7 @@ export function analyze(allTxs, allBudgets, opts) {
     currency, from, to, range, activeMonths, monthsCount,
     totals: {
       spent, income: r2(income), avgMonthly: r2(spent / monthsCount),
+      fixed: r2(included.reduce((s, c) => s + c.fixed, 0)),
       budget: budgetTotal, spentBudgeted, variance: r2(budgetTotal - spentBudgeted),
       variancePct: budgetTotal ? (spentBudgeted - budgetTotal) / budgetTotal : null,
       unbudgeted: r2(spent - spentBudgeted), mom,

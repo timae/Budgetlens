@@ -30,215 +30,68 @@
     </div>
   </header>
 
-  <main id="main">
-    <section class="intake" id="intake" aria-labelledby="intake-title">
-      <label class="drop" id="drop">
-        <strong id="intake-title">Drop CSV files here or choose files</strong>
-        <span class="hint muted">Bank exports (UBS, PostFinance, ZKB, Raiffeisen, Revolut and others), Category/Budget/Actual sheets, budget-only files and month-per-column sheets.</span>
-        <span class="hint muted">Up to 12 files, 15 MB each.</span>
-        <input type="file" id="file-input" multiple accept=".csv,.tsv,.txt,text/csv,text/plain">
-      </label>
-      <div class="intake-side">
-        <label class="btn primary" for="file-input">Choose CSV files</label>
-        <button type="button" class="btn" id="clear-btn" disabled>Clear everything</button>
-      </div>
-    </section>
-    <p class="status" id="status" role="status" aria-live="polite"></p>
-
-    <section class="section" id="files-section" aria-labelledby="files-title" hidden>
-      <div class="section-head">
-        <h2 id="files-title">Files</h2>
-        <p>Check what was detected. Every setting can be changed per file.</p>
-      </div>
-      <div class="files" id="files"></div>
-    </section>
-
-    <div id="dashboard" hidden>
-      <form class="toolbar" id="toolbar" aria-label="Dashboard controls">
-        <div class="field">
-          <label class="label" for="preset">Period</label>
-          <select id="preset">
-            <option value="all">All data</option>
-            <option value="last-month">Latest month</option>
-            <option value="last-3">Last 3 months</option>
-            <option value="last-6">Last 6 months</option>
-            <option value="last-12">Last 12 months</option>
-            <option value="this-year">Latest year to date</option>
-            <option value="last-year">Previous year</option>
-            <option value="custom">Custom range</option>
-          </select>
-        </div>
-        <div class="field">
-          <label class="label" for="from">From</label>
-          <select id="from"></select>
-        </div>
-        <div class="field">
-          <label class="label" for="to">To</label>
-          <select id="to"></select>
-        </div>
-        <div class="field">
-          <label class="label" for="currency">Currency</label>
-          <select id="currency" aria-describedby="currency-note"></select>
-          <span class="sr-only" id="currency-note">Amounts are never converted between currencies.</span>
-        </div>
-        <div class="field">
-          <label class="label" for="account">Account</label>
-          <select id="account"></select>
-        </div>
-        <div class="field">
-          <label class="label" for="person">Person</label>
-          <select id="person"></select>
-        </div>
-        <span class="spacer"></span>
-        <button type="button" class="btn small" id="export-summary">Export summary CSV</button>
-        <button type="button" class="btn small" id="export-tx">Export transactions CSV</button>
-        <button type="button" class="btn small" id="print-btn">Print</button>
-      </form>
-
-      <section class="hero" id="hero" aria-label="Key figures"></section>
-
-      <section class="section" id="where-section" aria-labelledby="where-title">
-        <div class="section-head">
-          <h2 id="where-title">Where the money goes</h2>
-          <p id="where-note">Click a tile to focus on a category. Untick a category to leave it out of every total.</p>
-        </div>
-        <div class="crumbs" id="crumbs"></div>
-        <div class="split">
-          <div>
-            <div class="treemap" id="treemap" role="group" aria-label="Spending by category"></div>
-          </div>
-          <div>
-            <ul class="catlist" id="catlist" aria-label="Categories"></ul>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="people-section" aria-labelledby="people-title">
-        <div class="section-head">
-          <h2 id="people-title">People and accounts</h2>
-          <p>Name each account and say whether it is shared or belongs to one person. On shared accounts, card payments go to the card's owner; everything else counts as shared.</p>
-        </div>
-        <div class="table-wrap" id="people-summary"></div>
-        <div class="people-grid">
-          <div>
-            <h3 class="label">Accounts</h3>
-            <div class="table-wrap" id="accounts"></div>
-          </div>
-          <div>
-            <h3 class="label">Cards</h3>
-            <div class="table-wrap" id="cards"></div>
-          </div>
-        </div>
-        <datalist id="people-list"></datalist>
-        <datalist id="account-list"></datalist>
-      </section>
-
-      <section class="section" id="budget-section" aria-labelledby="budget-title">
-        <div class="section-head">
-          <h2 id="budget-title">Budget vs actual</h2>
-          <p id="budget-note">Set a monthly budget per category, or load a budget file. Monthly budgets are multiplied by the months in the period.</p>
-        </div>
-        <div class="budget-tools">
-          <button type="button" class="btn small" id="budget-suggest">Suggest from average spending</button>
-          <button type="button" class="btn small" id="budget-export">Download budget CSV</button>
-          <button type="button" class="btn small link" id="budget-reset">Undo budget changes</button>
-          <span class="muted" id="budget-hint">Nothing is saved in the browser. Download the budget CSV and drop it in next time to keep your budgets.</span>
-        </div>
-        <div class="table-wrap" id="bva"></div>
-      </section>
-
-      <section class="section" id="months-section" aria-labelledby="months-title">
-        <div class="section-head">
-          <h2 id="months-title">Month by month</h2>
-          <p>Stacked by category. Dashed marks show the budget for each month.</p>
-        </div>
-        <div class="chart" id="monthly"></div>
-        <div class="legend" id="monthly-legend"></div>
-        <div id="monthly-table"></div>
-      </section>
-
-      <section class="section" id="compare-section" aria-labelledby="compare-title">
-        <div class="section-head">
-          <h2 id="compare-title">Compare periods</h2>
-          <p>Two months or two years side by side, by category.</p>
-        </div>
-        <div class="compare-controls">
-          <div class="field">
-            <label class="label" for="cmp-a">Period A</label>
-            <select id="cmp-a"></select>
-          </div>
-          <div class="field">
-            <label class="label" for="cmp-b">Period B</label>
-            <select id="cmp-b"></select>
-          </div>
-        </div>
-        <div class="table-wrap" id="compare"></div>
-        <div class="panel" id="calc-panel">
-          <h3 class="label">Percentage difference calculator</h3>
-          <div class="calc">
-            <div class="field">
-              <label for="calc-a">From value</label>
-              <input type="number" id="calc-a" inputmode="decimal" step="any" value="1200">
-            </div>
-            <div class="field">
-              <label for="calc-b">To value</label>
-              <input type="number" id="calc-b" inputmode="decimal" step="any" value="1350">
-            </div>
-          </div>
-          <div class="calc-out" id="calc-out" aria-live="polite"></div>
-        </div>
-      </section>
-
-      <section class="section" id="payees-section" aria-labelledby="payees-title">
-        <div class="section-head">
-          <h2 id="payees-title">Biggest payees</h2>
-          <p id="payees-note">Names cleaned up from bank descriptions; store branches grouped by chain.</p>
-        </div>
-        <ol class="payees" id="payees"></ol>
-      </section>
-
-      <section class="section" id="tx-section" aria-labelledby="tx-title">
-        <div class="section-head">
-          <h2 id="tx-title">Transactions</h2>
-          <p id="tx-count"></p>
-        </div>
-        <div class="tx-tools">
-          <div class="field">
-            <label class="label" for="tx-search">Search</label>
-            <input type="search" id="tx-search" placeholder="Payee, description or category" autocomplete="off" spellcheck="false">
-          </div>
-          <div class="field">
-            <label class="label" for="tx-kind">Show</label>
-            <select id="tx-kind">
-              <option value="all">All</option>
-              <option value="out">Money out</option>
-              <option value="in">Money in</option>
-            </select>
-          </div>
-        </div>
-        <div class="table-wrap" id="tx"></div>
-        <div class="more"><button type="button" class="btn small" id="tx-more" hidden>Show more</button></div>
-      </section>
-
-      <section class="section" id="rules-section" aria-labelledby="rules-title">
-        <div class="section-head">
-          <h2 id="rules-title">Category rules</h2>
-          <p>Used when a file has no category column. The first rule with a matching keyword wins. Keywords match whole words; end one with * to match word beginnings.</p>
-        </div>
-        <label class="cat-cell"><input type="checkbox" id="use-file-cats" checked> Use categories from files when they have a category column</label>
-        <div class="rules-list" id="rules"></div>
-        <div class="rules-foot">
-          <button type="button" class="btn small" id="rule-add">Add rule</button>
-          <button type="button" class="btn small primary" id="rules-apply">Apply rules</button>
-          <button type="button" class="btn small link" id="rules-reset">Reset to defaults</button>
-        </div>
-      </section>
+  <section class="intake" id="intake" aria-labelledby="intake-title">
+    <label class="drop" id="drop">
+      <strong id="intake-title">Drop your CSV files here or choose files</strong>
+      <span class="hint muted">Bank exports (UBS, PostFinance, ZKB, Raiffeisen, Revolut and others), Category/Budget/Actual sheets, budget-only files and month-per-column sheets. A guided setup starts once the files are read.</span>
+      <span class="hint muted">Add a saved Budget Lens settings file (.json) at the same time to restore your accounts, people, fixed costs and budgets.</span>
+      <input type="file" id="file-input" multiple accept=".csv,.tsv,.txt,.json,text/csv,text/plain,application/json">
+    </label>
+    <div class="intake-side">
+      <label class="btn primary" for="file-input">Choose files</label>
+      <span class="muted small-note">Up to 12 files, 15 MB each. Nothing leaves this browser tab.</span>
     </div>
-  </main>
+  </section>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+
+  <div id="app" hidden>
+    <nav class="tabs" id="nav" aria-label="Sections"></nav>
+    <form class="toolbar" id="toolbar" aria-label="Filters">
+      <div class="field">
+        <label class="label" for="preset">Period</label>
+        <select id="preset">
+          <option value="all">All data</option>
+          <option value="last-month">Latest month</option>
+          <option value="last-3">Last 3 months</option>
+          <option value="last-6">Last 6 months</option>
+          <option value="last-12">Last 12 months</option>
+          <option value="this-year">Latest year to date</option>
+          <option value="last-year">Previous year</option>
+          <option value="custom">Custom range</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="label" for="from">From</label>
+        <select id="from"></select>
+      </div>
+      <div class="field">
+        <label class="label" for="to">To</label>
+        <select id="to"></select>
+      </div>
+      <div class="field">
+        <label class="label" for="currency">Currency</label>
+        <select id="currency" aria-describedby="currency-note"></select>
+        <span class="sr-only" id="currency-note">Amounts are never converted between currencies.</span>
+      </div>
+      <div class="field">
+        <label class="label" for="account">Account</label>
+        <select id="account"></select>
+      </div>
+      <div class="field">
+        <label class="label" for="person">Person</label>
+        <select id="person"></select>
+      </div>
+      <span class="spacer"></span>
+      <button type="button" class="btn small" id="export-summary">Export summary</button>
+      <button type="button" class="btn small" id="export-tx">Export transactions</button>
+      <button type="button" class="btn small" id="print-btn">Print</button>
+    </form>
+    <main id="main" tabindex="-1"></main>
+  </div>
 
   <footer class="foot">
     <p><strong>Private by design.</strong> Files are read and analysed in this tab. The server only serves static files; it has no upload endpoint, database or storage, and the page's security policy blocks all network requests.</p>
-    <p>Nothing is saved. Closing or reloading the tab forgets everything, including rule edits. Currencies are never converted.</p>
+    <p>Nothing is saved in the browser. Use <em>Save settings</em> to keep accounts, people, fixed costs, budgets and rules in a file of your own. Currencies are never converted.</p>
     <p>Budget Lens. Font: Archivo (SIL Open Font License, <a href="/assets/fonts/OFL.txt">licence</a>).</p>
   </footer>
 </div>
