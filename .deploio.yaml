@@ -1,0 +1,12 @@
+# Deploio defaults for Budget Lens. Settings changed in Cockpit or with nctl take precedence.
+# Field reference: https://guides.deplo.io/user-guide/configuring-your-application.html
+size: micro
+port: 8080
+replicas: 1
+# Protect the app with Deploio's ingress basic auth. Credentials:
+#   nctl get app budget-lens --basic-auth-credentials
+enableBasicAuth: true
+# HTTP health check. The server answers GET/HEAD /healthz with 200 "ok".
+healthProbe:
+  path: /healthz
+  periodSeconds: 10

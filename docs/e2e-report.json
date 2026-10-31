@@ -162,7 +162,7 @@
   {
     "name": "navigation has all pages",
     "ok": true,
-    "detail": "Overview|Spending|Budget|Fixed costs|People & accounts|Transactions|Files & rules"
+    "detail": "Overview|Spending|Budget|Fixed costs|Forecast & goals|People & accounts|Transactions|Files & rules"
   },
   {
     "name": "overview shows figures, chart and cards",
@@ -236,6 +236,31 @@
   },
   {
     "name": "expected amount is editable",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "forecast page with balance chart and month table",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "a savings goal raises the amount to pay in",
+    "ok": true,
+    "detail": "5869 -> 6869"
+  },
+  {
+    "name": "split: equal shares",
+    "ok": true,
+    "detail": "3’434 / 3’435"
+  },
+  {
+    "name": "split: by net income (3:1)",
+    "ok": true,
+    "detail": "5152 / 1717"
+  },
+  {
+    "name": "minimum balance is respected",
     "ok": true,
     "detail": ""
   },
@@ -405,6 +430,21 @@
     "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":1,\"tablesWithoutHeaders\":0}"
   },
   {
+    "name": "desktop plan: no horizontal overflow",
+    "ok": true,
+    "detail": "1265/1265 "
+  },
+  {
+    "name": "desktop plan: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "plan: controls named, ids unique, headings, table headers",
+    "ok": true,
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":3,\"tablesWithoutHeaders\":0}"
+  },
+  {
     "name": "desktop people: no horizontal overflow",
     "ok": true,
     "detail": "1265/1265 "
@@ -520,6 +560,16 @@
     "detail": ""
   },
   {
+    "name": "mobile plan: no horizontal overflow",
+    "ok": true,
+    "detail": "390/390 "
+  },
+  {
+    "name": "mobile plan: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "mobile people: no horizontal overflow",
     "ok": true,
     "detail": "390/390 "
@@ -556,6 +606,11 @@
   },
   {
     "name": "mobile setup: figures fit",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile: editable tables become one card per row",
     "ok": true,
     "detail": ""
   },

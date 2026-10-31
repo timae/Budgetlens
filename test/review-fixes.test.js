@@ -130,3 +130,38 @@ test('11. user payee categories and file category aliases win over keyword rules
   const txs = prepareTransactions([f], rules, { payeeRules: new Map([['spoon enge', 'Eating out']]), aliases: new Map([['food', 'Groceries']]) });
   assert.deepEqual(txs.map((t) => t.category), ['Coffee & bakery', 'Eating out', 'Groceries']);
 });
+
+test('person-to-person payments keep the person as payee', async () => {
+  const { payeeName, BRANDS } = await import('../web/js/categorize.js');
+  assert.equal(payeeName('TWINT *Sent to Anna Muster', BRANDS), 'Anna Muster (TWINT)');
+  assert.equal(payeeName('Gutschrift TWINT von Ben Beispiel', BRANDS), 'Ben Beispiel (TWINT)');
+  assert.equal(payeeName('Zahlung TWINT: Migros Online', BRANDS), 'Migros');
+  assert.equal(payeeName('Purchase TWINT payment Coop', BRANDS), 'Coop');
+});
+
+test('spending exactly at the budget is "on budget"', () => {
+  const tx = { date: '2026-10-01', month: '2026-10', amount: -300, category: 'Groceries', currency: 'CHF', payee: 'x', desc: 'x' };
+  const a = analyze([tx], [{ category: 'Groceries', month: null, amount: 300, currency: 'CHF' }], { currency: 'CHF', coverage: { get: () => ({ fraction: 1, full: true }) } });
+  assert.equal(a.categories[0].status, 'on');
+});
+
+test('guessed years and undated actuals are reported, and the year can be set', () => {
+  const wide = processFile('plan.csv', enc('Kategorie;Jan;Feb;Total\nMiete;1980;1980;3960\n'));
+  assert.ok(wide.warnings.some((w) => w.includes('no year')));
+  const set = processFile('plan.csv', enc('Kategorie;Jan;Feb;Total\nMiete;1980;1980;3960\n'), { year: 2025 });
+  assert.deepEqual(Object.values(set.settings.monthCols), ['2025-01', '2025-02']);
+  assert.ok(!set.warnings.some((w) => w.includes('no year')));
+  const withYear = processFile('plan.csv', enc('Kategorie;Jan 26;Feb 26\nMiete;1980;1980\n'));
+  assert.ok(!withYear.warnings.some((w) => w.includes('no year')));
+  const sheet = processFile('overview.csv', enc('Category,Budget,Actual\nGroceries,1300,1250\n'), { month: '2026-10' });
+  assert.ok(sheet.warnings.some((w) => w.includes('no date') && w.includes('2026-10')));
+});
+
+test('settings files from version 1 still load, without the old account names', async () => {
+  const { loadSettings } = await import('../web/js/settings.js');
+  const s = loadSettings(JSON.stringify({ app: 'budget-lens', version: 1, cards: [{ card: '1234', owner: 'Alex' }], accounts: [{ name: 'Joint', kind: 'shared', owner: '' }], files: [{ file: 'a.csv', account: 'Joint' }], budgets: [{ currency: 'CHF', category: 'Groceries', monthly: 1200 }] }));
+  assert.equal(s.cardOwners.get('1234'), 'Alex');
+  assert.equal(s.budgetEdits.size, 1);
+  assert.equal(s.accountSettings.length, 0);
+  assert.ok(s.notes[0].includes('could not be carried over'));
+});

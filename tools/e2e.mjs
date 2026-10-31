@@ -166,8 +166,8 @@ check('finish opens the overview', await waitFor("location.hash === '#overview' 
 
 // ---------- 4. pages and drill-down ----------
 const nav = await js("return [...document.querySelectorAll('#nav a')].map(a => a.textContent)");
-check('navigation has all pages', nav.join('|') === 'Overview|Spending|Budget|Fixed costs|People & accounts|Transactions|Files & rules', nav.join('|'));
-check('overview shows figures, chart and cards', await js("return document.querySelectorAll('#main .card').length === 5 && document.querySelectorAll('#main .chart rect.seg').length > 10 && document.querySelectorAll('#main .chart rect.hit').length >= 6"));
+check('navigation has all pages', nav.join('|') === 'Overview|Spending|Budget|Fixed costs|Forecast & goals|People & accounts|Transactions|Files & rules', nav.join('|'));
+check('overview shows figures, chart and cards', await js("return document.querySelectorAll('#main .card').length === 6 && document.querySelectorAll('#main .chart rect.seg').length > 10 && document.querySelectorAll('#main .chart rect.hit').length >= 6"));
 await shot('desktop-light');
 await js("const hits = document.querySelectorAll('#main .chart rect.hit'); hits[hits.length - 2].dispatchEvent(new MouseEvent('click', { bubbles: true }))");
 check('selecting a month drills into spending for that month', await waitFor("location.hash === '#spending' && document.querySelector('.crumbs .chip-filter')"));
@@ -214,6 +214,45 @@ await setInput('#fx-amt-0', '2000');
 await sleep(300);
 check('expected amount is editable', (await js("return document.querySelector('#fx-amt-0').value")) === '2000');
 
+// Forecast & goals
+await js("location.hash = 'plan'");
+check('forecast page with balance chart and month table', await waitFor("document.querySelectorAll('#plan-months tbody tr').length === 12 && document.querySelectorAll('#plan-chart path.bal-line').length === 2"));
+const req = async () => Number((await js("return document.querySelector('.plan-stats .stat strong').textContent")).replace(/[^0-9]/g, ''));
+await setInput('#plan-income', '0');
+await sleep(300);
+const before0 = await req();
+await click('#plan-add-goal');
+await sleep(300);
+await setInput('#goal-amt-0', '12000');
+await sleep(300);
+check('a savings goal raises the amount to pay in', (await req()) > before0, `${before0} -> ${await req()}`);
+await click('#plan-add-person');
+await sleep(200);
+await setInput('#pc-name-0', 'Alex');
+await sleep(200);
+await click('#plan-add-person');
+await sleep(200);
+await setInput('#pc-name-1', 'Sam');
+await sleep(200);
+await setInput('#pc-amt-0', '3000');
+await sleep(200);
+await setInput('#plan-split-mode', 'equal');
+await sleep(300);
+const eq = await js("return [...document.querySelectorAll('#plan-split tbody tr')].map(r => r.cells[2].textContent)");
+check('split: equal shares', eq.length === 2 && Math.abs(Number(eq[0].replace(/[^0-9]/g, '')) - Number(eq[1].replace(/[^0-9]/g, ''))) <= 1, eq.join(' / '));
+await setInput('#plan-split-mode', 'income');
+await sleep(300);
+await setInput('#split-w-0', '9000');
+await sleep(200);
+await setInput('#split-w-1', '3000');
+await sleep(300);
+const inc = await js("return [...document.querySelectorAll('#plan-split tbody tr')].map(r => Number(r.cells[3].textContent.replace(/[^0-9]/g, '')))");
+check('split: by net income (3:1)', Math.abs(inc[0] - 3 * inc[1]) <= 3, inc.join(' / '));
+await setInput('#plan-buffer', '5000');
+await sleep(300);
+check('minimum balance is respected', await js("return document.querySelector('#plan-verdict').textContent.includes('5\u2019000')"));
+await js('window.scrollTo(0, 0)');
+await shot('desktop-plan');
 await js("location.hash = 'budget'");
 check('budget page keeps edits', await waitFor("document.querySelector('#bva input.edited')"));
 await js("location.hash = 'people'");
@@ -345,7 +384,7 @@ async function a11y(name) {
   `);
   check(`${name}: controls named, ids unique, headings, table headers`, r.unnamed.length === 0 && r.dup.length === 0 && r.h1 === 1 && r.h2 >= 1 && r.tablesWithoutHeaders === 0, JSON.stringify(r));
 }
-const pages = ['overview', 'spending', 'budget', 'fixed', 'people', 'transactions', 'files', 'setup'];
+const pages = ['overview', 'spending', 'budget', 'fixed', 'plan', 'people', 'transactions', 'files', 'setup'];
 for (const p of pages) {
   await js(`location.hash = '${p}'`);
   await sleep(300);
@@ -366,6 +405,10 @@ for (const p of pages) {
   await sleep(300);
   await layout(`mobile ${p}`);
 }
+await js("location.hash = 'budget'");
+await sleep(300);
+check('mobile: editable tables become one card per row', await js("const t = document.querySelector('#bva'); const td = t.querySelector('tbody td[data-label]'); return t.classList.contains('stack') && getComputedStyle(t.querySelector('thead')).position === 'absolute' && getComputedStyle(t.querySelector('tbody tr')).display === 'block' && td && td.getAttribute('role') === 'cell'"));
+await shot('mobile-budget');
 await js("location.hash = 'overview'");
 await sleep(300);
 await shot('mobile-dark');

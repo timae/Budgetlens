@@ -8,6 +8,8 @@ Drop one or more CSV files (bank exports or budget sheets) and see where the mon
 
 ![Spending drill-down](docs/spending.jpg)
 
+![Forecast and goals](docs/forecast.jpg)
+
 ## Security model
 
 | Threat | Control |
@@ -36,7 +38,7 @@ nctl create app budget-lens \
   --port=8080
 ```
 
-The build stage runs `go vet` and `go test` on `golang:1.27-alpine`. A failing test fails the deploy. The runtime image is `gcr.io/distroless/static-debian12:nonroot`. For reproducible builds, pin both base images by digest.
+The build stage runs `go vet` and `go test` on `golang:1.27-alpine`. A failing test fails the deploy. The runtime image is `gcr.io/distroless/static-debian12:nonroot`. For reproducible builds, run `tools/pin-images.sh` (needs Docker): it pins both base images to their current digests in the Dockerfile. Run it again to pick up base-image patches, then commit.
 
 `.deploio.yaml` sets the same defaults: `size: micro`, `port: 8080`, `enableBasicAuth: true` and a health probe on `/healthz`. Settings changed in Cockpit or with `nctl` take precedence over the file. Deploio checks app health with a TCP probe on the port by default. If your platform version doesn't support the `healthProbe` field, the TCP probe still applies and `/healthz` stays available for external monitoring.
 
@@ -119,12 +121,16 @@ Every detected setting can be changed per file under *Detected settings and prev
 
 ## Pages
 
+On phones, wide tables you edit (budgets, accounts, cards, fixed costs, categories) turn into one card per row, with each value labelled.
+
+
 | Page | What it shows |
 | --- | --- |
 | **Overview** | Total spent, monthly average, fixed costs per month, budget variance and month-over-month change; month-by-month chart; top categories, fixed costs, budget and people at a glance. |
 | **Spending** | Treemap with drill-down: categories → payees → one payee's payments. A detail panel shows totals, average per month, share, fixed part and budget status at each level. Select any month in the chart to narrow everything to that month. Category include/exclude toggles, period comparison and the percentage calculator live here too. |
 | **Budget** | Budget vs actual per category with editable monthly budgets. |
 | **Fixed costs** | Detected and declared recurring payments (see below). |
+| **Forecast & goals** | Month-by-month balance forecast for one account or all of them, with savings goals and the amount that has to be paid in, split between people. |
 | **People & accounts** | Spending per person, account types and owners, card owners. |
 | **Transactions** | Searchable, sortable list. The drill-down from other pages arrives as removable filter chips; *Fixed costs only* shows the recurring part. |
 | **Files & rules** | Add files, check and adjust every detected setting per file, edit category rules, save settings, clear everything. |
@@ -151,6 +157,8 @@ Dropping the first files starts a seven-step setup. Every step can be skipped an
 - **Money between own accounts.** It is a transfer, not income or spending, when the amount leaves one account and arrives in another within four days, or when the text names one of your people or the names you entered (for example a family name). Transfers are left out of totals by default.
 - **Categories.** In this order: the category you chose for a payee, the file's own category (mapped through your aliases), keyword rules on the cleaned payee name, then keyword rules on the full description. Money in that matches a spending rule is a refund; other money in is income.
 - **Sign.** A single amount column with negative values is read as "negative = money out". If a column has only positive amounts, the descriptions decide: salary, credit and refund wording means money in, anything else is treated as an expense list. A warning asks you to check either way.
+- **Budget sheets.** Month columns without a year ("Jan", "Feb") use the current year; a warning says so and *Year of the month columns* changes it. Actual amounts without a date are counted in one month, which is also shown as a warning and can be changed. Spending within ±0.5% of the budget is *On budget*.
+- **Person-to-person payments.** TWINT, Revolut and PayPal payments keep the person's name as payee ("Anna Muster (TWINT)"), so payments to different people stay apart.
 - **Columns ignored on purpose.** Balance, fees, references, original/foreign amounts and currencies, exchange rates, individual amounts of collective orders, and "type of transaction" columns.
 
 ## Fixed costs
@@ -179,7 +187,32 @@ Nothing is stored in the browser. *Save settings* downloads `budget-lens-setting
 
 The file contains no transactions. It does hold names, IBANs, card endings, payee names and amounts of fixed costs, and budgets, so treat it as private. Drop it in together with your CSV files next time to restore everything.
 
+Settings files from the first version still load. Their account names can't be carried over, because they were tied to file names; the app says so.
+
 The loader treats the file as untrusted. It is limited to 1 MB and accepts only the expected shape. IBAN, card and key formats are checked, and every string is cleaned and limited in length. Values go into `Map`s, so `__proto__` and similar keys cannot pollute objects. The tab asks for confirmation before closing while there are unsaved settings.
+
+## Forecast & goals
+
+The forecast projects an account (or all accounts) month by month for 6 to 36 months. It starts from:
+
+- **Balance today:** the latest balance in the export, if it has a balance column; you can type your own.
+- **Fixed costs:** every confirmed fixed cost, placed in the months it is due, so quarterly and yearly bills land where they belong. Overdue ones are placed in the first month.
+- **Other spending:** the average spending that is not a fixed cost, from the last six complete months.
+- **Other income:** salary, interest and refunds coming into the account.
+- **Paid in:** money each person transfers in, recognised from transfers between your own accounts by the names under People & accounts. You can change the amounts or add people.
+- **Savings goals:** name, amount, target month and amount already saved. Each goal gets the monthly amount that reaches it in time.
+- **Keep at least:** the minimum balance the account should not drop below.
+
+From this the page works out two amounts. *Pay in per month* is the smallest constant monthly amount that keeps the balance above the minimum in every month, including months with yearly or quarterly bills. *Average need* is enough over the whole period but can dip in expensive months. Both are compared with what is paid in today.
+
+The amount can be split between people in four ways:
+
+- like today's ratio
+- equally
+- in proportion to net incomes you enter (they stay in the tab and in your settings file)
+- by your own percentages
+
+A chart shows the balance with today's contributions and with the needed amount, and a table lists every month. Everything you enter on this page is part of the settings file.
 
 ## Budgets
 

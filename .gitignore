@@ -1,0 +1,4 @@
+e2e-out/
+/budget-lens
+node_modules/
+.DS_Store

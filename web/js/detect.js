@@ -74,7 +74,23 @@ export function accountHint(rows, s) {
   const l = ` ${keys.join(' ')} `;
   const bank = / zkb /.test(l) ? 'ZKB' : / beschreibung1 | description1 /.test(l) ? 'UBS' : / avisierungstext | notification text /.test(l) ? 'PostFinance'
     : / booked at /.test(l) ? 'Raiffeisen' : / started date /.test(l) ? 'Revolut' : / original amount .* wise /.test(l) ? 'neon' : / activity name /.test(l) ? 'Yuh' : '';
-  return { iban, layout, bank };
+  // Latest balance, when the export has a balance column: the row with the newest date
+  // (first of them for newest-first exports, last for oldest-first).
+  let balance = null;
+  const bc = keys.findIndex((k) => /^(saldo|balance|solde|kontostand)\b/.test(k));
+  const dc = s.columns.indexOf('date');
+  if (bc !== -1 && dc !== -1) {
+    const data = rows.slice(s.headerRow + 1);
+    const dated = data.map((r, i) => ({ i, d: parseDate(r[dc], s.dateFormat), v: parseAmount(r[bc], s.decimal) })).filter((x) => x.d && x.v != null);
+    if (dated.length) {
+      const newestFirst = dated[0].d >= dated[dated.length - 1].d;
+      const max = dated.reduce((m, x) => (x.d > m ? x.d : m), dated[0].d);
+      const atMax = dated.filter((x) => x.d === max);
+      const pick = newestFirst ? atMax[0] : atMax[atMax.length - 1];
+      balance = { date: pick.d, amount: pick.v };
+    }
+  }
+  return { iban, layout, bank, balance };
 }
 
 function validIban(iban) {

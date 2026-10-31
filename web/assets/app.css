@@ -637,3 +637,39 @@ table.data.compact td { padding: 4px 6px; }
 .review .sub-head:first-of-type { margin-top: 4px; }
 #uncategorised input, #aliases input { min-width: 180px; }
 .detail .field input { width: 100%; }
+
+.pill.on { color: var(--ink); }
+@media (max-width: 640px) {
+  table.stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  table.stack, table.stack tbody, table.stack tfoot, table.stack tr { display: block; width: 100%; }
+  table.stack tr { border-bottom: 1px solid var(--rule-2); padding: 8px 0; }
+  table.stack td, table.stack tbody th { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 0; padding: 4px 0; text-align: right; }
+  table.stack tbody th { justify-content: flex-start; font-size: 1rem; text-align: left; }
+  table.stack td[data-label]::before { content: attr(data-label); flex: none; color: var(--ink-2); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; font-stretch: 75%; text-align: left; }
+  table.stack td:empty { display: none; }
+  table.stack td.hide-sm, table.stack th.hide-sm { display: none; }
+  table.stack td > input, table.stack td > select, table.stack td .budget-input input { max-width: 62%; min-width: 0; }
+  table.stack td .budget-input { flex: 0 1 62%; justify-content: flex-end; }
+  table.stack .file-list { width: 62%; }
+  table.stack .bva-bar { width: 50%; }
+  table.stack tfoot td { display: flex; justify-content: space-between; border: 0; }
+  table.stack tfoot td:empty { display: none; }
+}
+
+/* Forecast & goals */
+.plan-inputs { display: grid; gap: 12px; }
+.plan-inputs .settings-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.plan-inputs .field .note { font-size: 0.8rem; }
+.plan-stats { margin-bottom: 8px; }
+.split-mode { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin: 6px 0 10px; }
+.split-mode .note { flex: 1 1 260px; }
+.chart .bal-line { stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.chart .bal-line.line-a { stroke: var(--n100); }
+.chart .bal-line.line-b { stroke: var(--n50); stroke-dasharray: 2 4; }
+.chart .bal-dot.line-a { fill: var(--n100); }
+.chart .bal-dot.line-b { fill: var(--n50); }
+.chart .bal-dot.low { fill: var(--bad); }
+.legend .line-key { display: inline-block; width: 18px; height: 0; border-top: 3px solid var(--n100); }
+.legend .line-key.line-b { border-top: 3px dotted var(--n50); }
+table.data tr.low th, table.data tr.low td { background: color-mix(in srgb, var(--bad) 8%, transparent); }
+#plan-goals input, #plan-contrib input { min-width: 90px; }

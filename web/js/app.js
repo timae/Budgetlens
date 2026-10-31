@@ -9,18 +9,21 @@ import { clusterAccounts, dedupe, defaultAccountName, fingerprint, markOwnTransf
 import { analyze, comparePeriods, currencies, dataMonths, monthCoverage, percentDiff, presetRange } from './analyze.js';
 import { normalizeKey, toCSV, cleanText } from './sanitize.js';
 import { h, $, setChildren, option } from './dom.js';
-import { drawMonthly, drawTreemap } from './charts.js';
+import { drawBalance, drawMonthly, drawTreemap } from './charts.js';
 import { money, money0, signed0, signed2, pct, signedPct, monthLabel, dayLabel } from './format.js';
 import { ACCOUNT_KINDS, SHARED, UNASSIGNED, accountSummary, assignPeople, cardSummary, cleanPerson, personSummary } from './people.js';
 import { applyBudgetEdits, budgetCSV, budgetKey, parseBudgetInput, suggestMonthly } from './budget.js';
 import { CADENCES, detectRecurring, fixedCosts, fixedKey, fixedStatus, markFixed } from './recurring.js';
 import { loadSettings, saveSettings, MAX_SETTINGS_BYTES } from './settings.js';
+import { SPLIT_MODES, buildForecast, planBaseline, splitContribution } from './forecast.js';
+import { addMonths } from './dates.js';
 
 const VIEWS = [
   ['overview', 'Overview'],
   ['spending', 'Spending'],
   ['budget', 'Budget'],
   ['fixed', 'Fixed costs'],
+  ['plan', 'Forecast & goals'],
   ['people', 'People & accounts'],
   ['transactions', 'Transactions'],
   ['files', 'Files & rules'],
@@ -56,6 +59,8 @@ const state = {
   categoryAliases: new Map(), // normalised file category -> category
   ownNames: '', // words that identify transfers between own accounts
   coverage: new Map(),
+  // Forecast & goals. null = use what the data shows.
+  plan: { scope: '', horizon: 12, balance: null, buffer: 0, variable: null, otherIncome: null, contributions: null, goals: [], splitMode: 'current', weights: new Map() },
   cardOwners: new Map(),
   budgetEdits: new Map(),
   fixedOverrides: new Map(),
@@ -173,6 +178,7 @@ function applySettings(s) {
     state.rules = buildRules(s.rules);
   }
   state.useFileCategories = s.useFileCategories;
+  if (s.plan) state.plan = s.plan;
 }
 
 function runFile(f, defaultMonth) {
@@ -316,12 +322,33 @@ function renderAll() {
   if (!$('#toolbar').hidden) renderToolbar();
   state.last = hasData ? analysis() : null;
   const render = {
-    setup: renderSetup, overview: renderOverview, spending: renderSpending, budget: renderBudgetView, fixed: renderFixedView,
+    setup: renderSetup, overview: renderOverview, spending: renderSpending, budget: renderBudgetView, fixed: renderFixedView, plan: renderPlanView,
     people: renderPeopleView, transactions: renderTransactionsView, files: renderFilesView,
   }[state.view] || renderOverview;
   afterRender.length = 0;
   setChildren($('#main'), render());
   afterRender.splice(0).forEach((fn) => fn());
+  stackTables();
+}
+
+// On phones, wide editable tables become one card per row. Each cell gets its column name as a
+// label, and explicit ARIA roles keep the table semantics when CSS changes the display.
+const STACKED = '#bva, #accounts, #cards, #fixed-active, #fixed-suggested, #fixed-dismissed, #uncategorised, #aliases, #people-summary, #payee-rules, #plan-contrib, #plan-goals, #plan-split';
+function stackTables() {
+  for (const table of document.querySelectorAll(STACKED)) {
+    table.classList.add('stack');
+    table.setAttribute('role', 'table');
+    const heads = [...table.querySelectorAll('thead th')].map((x) => x.textContent.trim());
+    for (const part of table.querySelectorAll('thead, tbody, tfoot')) part.setAttribute('role', 'rowgroup');
+    for (const tr of table.querySelectorAll('tr')) {
+      tr.setAttribute('role', 'row');
+      [...tr.children].forEach((cell, i) => {
+        const inHead = cell.closest('thead');
+        cell.setAttribute('role', inHead ? 'columnheader' : cell.tagName === 'TH' ? 'rowheader' : 'cell');
+        if (!inHead && heads[i]) cell.setAttribute('data-label', heads[i]);
+      });
+    }
+  }
 }
 
 function renderNav() {
@@ -411,6 +438,13 @@ function renderOverview() {
           ? (over.length ? h('ul', { class: 'mini-list' }, over.map((x) => h('li', {}, catCell(x.name), h('span', { class: 'num bad', text: signedPct(x.pct) })))) : h('p', { class: 'note good', text: 'Every budgeted category is within budget.' }))
           : h('p', { class: 'note', text: 'No budgets set yet.' }),
         link(a.totals.budget > 0 ? 'Open budget \u2192' : 'Set budgets \u2192', 'budget')),
+      card('Forecast',
+        (() => { const m = planModel(); const d = m.forecast.contributions - m.forecast.required; return h('ul', { class: 'mini-list' },
+          h('li', {}, h('span', { text: 'Pay in per month' }), h('span', { class: 'num', text: money0(m.forecast.required) })),
+          h('li', {}, h('span', { text: 'Paid in today' }), h('span', { class: 'num', text: money0(m.forecast.contributions) })),
+          h('li', {}, h('span', { text: d >= 0 ? 'More than needed' : 'Short per month' }), h('span', { class: ['num', d >= -0.5 ? 'good' : 'bad'], text: money0(Math.abs(d)) })),
+          h('li', {}, h('span', { text: 'Savings goals' }), h('span', { class: 'num', text: String(state.plan.goals.length) }))); })(),
+        link('Forecast & goals \u2192', 'plan')),
       card('People',
         people.length ? h('ul', { class: 'mini-list' }, people.map((p) => h('li', {}, h('span', { text: p.name }), h('span', { class: 'num', text: `${money0(p.spent)} \u00B7 ${pct(p.share)}` })))) : h('p', { class: 'note', text: 'No spending in this period.' }),
         link('People & accounts \u2192', 'people'))));
@@ -742,6 +776,173 @@ function fixedTables({ compact = false } = {}) {
 
 function renderFixedView() {
   return section('Fixed costs', 'Payments that come back at a steady rhythm with a steady amount are detected automatically: rent, insurance, childcare, subscriptions. Confirm, adjust or add your own. Payments within 15% (or 5) of the expected amount count as fixed.', fixedTables());
+}
+
+// ---------- forecast & goals ----------
+const HORIZONS = [6, 12, 24, 36];
+
+/** Everything the plan needs, computed from the data plus the user's plan inputs. */
+function planModel() {
+  const p = state.plan;
+  const c = state.currency;
+  const scopeTxs = state.txs.filter((t) => t.currency === c && (!p.scope || t.account === p.scope));
+  const cov = monthCoverage(scopeTxs);
+  const fullMonths = [...cov].filter(([, v]) => v.full).map(([m]) => m).sort();
+  const baseline = planBaseline(scopeTxs, fullMonths.slice(-6), { ownNames: ownNameList(), excluded: state.excluded, income: INCOME, transfers: TRANSFERS });
+  const latest = scopeTxs.reduce((m, t) => (t.date > m ? t.date : m), '');
+  const start = latest ? addMonths(latest.slice(0, 7), 1) : new Date().toISOString().slice(0, 7);
+  // Latest balance from the files of the planned account(s).
+  let fileBalance = null;
+  for (const cl of state.clusters) {
+    if (p.scope && cl.name !== p.scope) continue;
+    let best = null;
+    for (const fi of cl.files) {
+      const b = state.okFiles[fi]?.result.hint?.balance;
+      if (b && state.okFiles[fi].result.settings.currency === c && (!best || b.date > best.date)) best = b;
+    }
+    if (best) fileBalance = { amount: (fileBalance?.amount || 0) + best.amount, date: fileBalance && fileBalance.date > best.date ? fileBalance.date : best.date };
+  }
+  const fixed = state.fixed.filter((f) => f.active && f.currency === c && (!p.scope || !f.account || f.account === p.scope));
+  const inputs = {
+    start, months: p.horizon, buffer: p.buffer,
+    balance: p.balance ?? fileBalance?.amount ?? 0,
+    variable: p.variable ?? baseline.variable,
+    otherIncome: p.otherIncome ?? baseline.otherIncome,
+    contributions: p.contributions ?? baseline.contributions,
+    fixed: fixed.map((f) => ({ payee: f.payee, amount: f.amount, every: f.every, next: f.next })),
+    goals: p.goals,
+  };
+  const forecast = buildForecast(inputs);
+  const needed = buildForecast({ ...inputs, contributions: [{ name: 'needed', monthly: forecast.required }] });
+  const opts = { mode: p.splitMode, weights: p.weights };
+  return { p, c, baseline, fullMonths, fileBalance, fixed, inputs, forecast, needed, split: splitContribution(forecast.required, inputs.contributions, opts), splitAvg: splitContribution(forecast.average, inputs.contributions, opts) };
+}
+
+function planNumber(id, label, value, placeholder, onSet, note) {
+  return h('div', { class: 'field' },
+    h('label', { class: 'label', htmlFor: id, text: label }),
+    h('input', { type: 'text', id, value: value == null ? '' : String(value), attrs: { inputmode: 'decimal', autocomplete: 'off', placeholder: placeholder == null ? '' : String(placeholder), maxlength: 14 },
+      on: { change: (e) => { const v = parseBudgetInput(e.target.value); if (Number.isNaN(v)) { setStatus(`Enter an amount like 1234.50 for \u201C${label}\u201D.`, true); return; } keepFocus(id, () => { onSet(v); renderAll(); }); } } }),
+    note ? h('span', { class: 'note', text: note }) : null);
+}
+
+function renderPlanView() {
+  if (!state.last) return emptyView();
+  const m = planModel();
+  const { p, c, baseline, forecast: f, needed } = m;
+  const accounts = [...new Set(state.clusters.map((cl) => cl.name))];
+  const contributions = m.inputs.contributions;
+  const editContrib = (fn, focusId) => keepFocus(focusId, () => { state.plan.contributions = fn((p.contributions ?? baseline.contributions).map((x) => ({ ...x }))); renderAll(); });
+  const diff = f.contributions - f.required;
+  const chart = h('div', { class: 'chart', id: 'plan-chart' });
+  afterRender.push(() => drawBalance(chart, [
+    { name: 'With today\u2019s contributions', cls: 'line-a', values: f.rows.map((r) => ({ month: r.month, value: r.closing })) },
+    { name: `Paying in ${money0(f.required)} a month`, cls: 'line-b', values: needed.rows.map((r) => ({ month: r.month, value: r.closing })) },
+  ], { currency: c, buffer: p.buffer }));
+
+  const inputsPanel = h('div', { class: 'panel plan-inputs' },
+    h('div', { class: 'settings-grid' },
+      h('div', { class: 'field' }, h('label', { class: 'label', htmlFor: 'plan-scope', text: 'Account' }),
+        h('select', { id: 'plan-scope', on: { change: (e) => keepFocus('plan-scope', () => { state.plan = { ...state.plan, scope: e.target.value, balance: null, variable: null, otherIncome: null, contributions: null }; renderAll(); }) } },
+          option('', 'All accounts', !p.scope), accounts.map((n) => option(n, n, n === p.scope)))),
+      h('div', { class: 'field' }, h('label', { class: 'label', htmlFor: 'plan-horizon', text: 'Months ahead' }),
+        h('select', { id: 'plan-horizon', on: { change: (e) => keepFocus('plan-horizon', () => { state.plan.horizon = Number(e.target.value); renderAll(); }) } }, HORIZONS.map((n) => option(String(n), `${n} months`, n === p.horizon)))),
+      planNumber('plan-balance', 'Balance today', p.balance, m.fileBalance?.amount ?? 0, (v) => { state.plan.balance = v; },
+        m.fileBalance ? `From the file: ${money(m.fileBalance.amount)} on ${dayLabel(m.fileBalance.date)}` : 'No balance column in the files; enter it.'),
+      planNumber('plan-buffer', 'Keep at least', p.buffer, 0, (v) => { state.plan.buffer = v ?? 0; }, 'The balance should not go below this.'),
+      planNumber('plan-variable', 'Other spending per month', p.variable, baseline.variable, (v) => { state.plan.variable = v; },
+        `Spending that is not a fixed cost. Average of ${baseline.months} complete month${baseline.months === 1 ? '' : 's'}: ${money0(baseline.variable)}.`),
+      planNumber('plan-income', 'Other income per month', p.otherIncome, baseline.otherIncome, (v) => { state.plan.otherIncome = v; },
+        `Salary, interest and refunds into this account. Average: ${money0(baseline.otherIncome)}.`)),
+    h('h3', { class: 'sub-head', text: 'Paid in per month' }),
+    h('p', { class: 'note', text: contributions.length ? 'Detected from transfers between your own accounts (names under People & accounts). Change or add people.' : 'Nobody pays in yet. Add the people who pay into this account.' }),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'plan-contrib' },
+      h('caption', { class: 'sr-only', text: 'Money paid in per person and month' }),
+      h('thead', {}, h('tr', {}, th('Person'), th(`Per month (${c})`, 'num'), h('th', { attrs: { scope: 'col' } }, h('span', { class: 'sr-only', text: 'Actions' })))),
+      h('tbody', {}, contributions.map((x, i) => h('tr', {},
+        h('td', {}, h('input', { type: 'text', id: `pc-name-${i}`, value: x.name, attrs: { list: 'people-list', maxlength: 40, autocomplete: 'off', 'aria-label': `Name of person ${i + 1}` }, on: { change: (e) => editContrib((list) => { list[i].name = cleanPerson(e.target.value) || list[i].name; return list; }, `pc-name-${i}`) } })),
+        h('td', { class: 'num' }, h('span', { class: 'budget-input' }, h('input', { type: 'text', id: `pc-amt-${i}`, value: String(x.monthly), attrs: { inputmode: 'decimal', maxlength: 14, autocomplete: 'off', 'aria-label': `Monthly amount paid in by ${x.name}` },
+          on: { change: (e) => { const v = parseBudgetInput(e.target.value); if (v == null || Number.isNaN(v)) { e.target.value = String(x.monthly); return; } editContrib((list) => { list[i].monthly = v; return list; }, `pc-amt-${i}`); } } }))),
+        h('td', {}, h('button', { type: 'button', class: 'btn small', text: 'Remove', attrs: { 'aria-label': `Remove ${x.name}` }, on: { click: () => editContrib((list) => list.filter((_, j) => j !== i)) } }))))))),
+    h('div', { class: 'btn-row' },
+      h('button', { type: 'button', class: 'btn small', id: 'plan-add-person', text: 'Add person', on: { click: () => editContrib((list) => [...list, { name: `Person ${list.length + 1}`, monthly: 0 }].slice(0, 12), `pc-name-${contributions.length}`) } }),
+      p.contributions ? h('button', { type: 'button', class: 'btn small link', text: 'Use detected amounts', on: { click: () => { state.plan.contributions = null; renderAll(); } } }) : null),
+    h('h3', { class: 'sub-head', text: 'Savings goals' }),
+    h('p', { class: 'note', text: 'Holidays, a new car, an emergency fund: what you want to have by when. The plan sets the monthly amount aside so each goal is reached in time.' }),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'plan-goals' },
+      h('caption', { class: 'sr-only', text: 'Savings goals' }),
+      h('thead', {}, h('tr', {}, th('Goal'), th(`Amount (${c})`, 'num'), th('By (YYYY-MM)'), th(`Saved already`, 'num'), th('Per month', 'num'), h('th', { attrs: { scope: 'col' } }, h('span', { class: 'sr-only', text: 'Actions' })))),
+      h('tbody', {}, p.goals.length ? p.goals.map((g, i) => {
+        const plan = f.goals[i];
+        const set = (patch, id) => keepFocus(id, () => { state.plan.goals = state.plan.goals.map((x, j) => (j === i ? { ...x, ...patch } : x)); renderAll(); });
+        const num = (key, id, label) => h('span', { class: 'budget-input' }, h('input', { type: 'text', id, value: String(g[key] || 0), attrs: { inputmode: 'decimal', maxlength: 14, autocomplete: 'off', 'aria-label': `${label} for ${g.name}` },
+          on: { change: (e) => { const v = parseBudgetInput(e.target.value); if (Number.isNaN(v)) { e.target.value = String(g[key] || 0); return; } set({ [key]: v ?? 0 }, id); } } }));
+        return h('tr', {},
+          h('td', {}, h('input', { type: 'text', id: `goal-name-${i}`, value: g.name, attrs: { maxlength: 40, autocomplete: 'off', 'aria-label': `Name of goal ${i + 1}` }, on: { change: (e) => set({ name: cleanPerson(e.target.value) || g.name }, `goal-name-${i}`) } })),
+          h('td', { class: 'num' }, num('amount', `goal-amt-${i}`, 'Target amount')),
+          h('td', {}, h('input', { type: 'text', id: `goal-by-${i}`, value: g.by, attrs: { maxlength: 7, placeholder: 'YYYY-MM', autocomplete: 'off', 'aria-label': `Target month for ${g.name}` },
+            on: { change: (e) => { const v = e.target.value.trim(); if (/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) set({ by: v }, `goal-by-${i}`); else e.target.value = g.by; } } })),
+          h('td', { class: 'num' }, num('saved', `goal-saved-${i}`, 'Amount saved already')),
+          h('td', { class: 'num', text: plan.done ? 'reached' : `${money0(plan.monthly)} \u00D7 ${plan.months}` }),
+          h('td', {}, h('button', { type: 'button', class: 'btn small', text: 'Remove', attrs: { 'aria-label': `Remove goal ${g.name}` }, on: { click: () => { state.plan.goals = state.plan.goals.filter((_, j) => j !== i); renderAll(); } } })));
+      }) : h('tr', {}, h('td', { attrs: { colspan: 6 }, class: 'empty', text: 'No goals yet.' }))))),
+    h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn small', id: 'plan-add-goal', text: 'Add goal', on: { click: () => {
+      state.plan.goals = [...state.plan.goals, { name: `Goal ${state.plan.goals.length + 1}`, amount: 5000, saved: 0, by: addMonths(m.inputs.start, 11) }].slice(0, 20);
+      keepFocus(`goal-name-${state.plan.goals.length - 1}`, renderAll);
+    } } })));
+
+  const verdict = f.contributions === 0 ? 'Nobody pays in yet.'
+    : diff >= 0.5 ? `Today\u2019s contributions are ${money0(diff)} a month more than needed.`
+      : diff <= -0.5 ? `Today\u2019s contributions are ${money0(-diff)} a month short.` : 'Today\u2019s contributions are just right.';
+  const results = h('div', {},
+    h('div', { class: 'stats wide plan-stats' },
+      stat('Pay in per month', `${c} ${money0(f.required)}`),
+      stat('Paid in today', money0(f.contributions)),
+      stat('Difference', `${diff >= 0 ? '+' : '\u2212'}${money0(Math.abs(diff))}`, diff >= -0.5 ? 'good' : 'bad'),
+      stat('Average need', money0(f.average))),
+    h('p', { class: 'lead', id: 'plan-verdict', text: `${verdict} To cover fixed costs, other spending and goals and never drop below ${money0(p.buffer)}, ${money0(f.required)} a month must be paid in. The lowest point with today\u2019s contributions is ${money0(f.lowest.closing)} in ${monthLabel(f.lowest.month)}${f.shortfallMonths.length ? `; below the minimum in ${f.shortfallMonths.length} month${f.shortfallMonths.length === 1 ? '' : 's'}` : ''}.` }),
+    m.split.length ? h('div', { class: 'split-mode' },
+      h('div', { class: 'field' }, h('label', { class: 'label', htmlFor: 'plan-split-mode', text: 'Split between people' }),
+        h('select', { id: 'plan-split-mode', on: { change: (e) => keepFocus('plan-split-mode', () => { state.plan.splitMode = e.target.value; renderAll(); }) } },
+          [...SPLIT_MODES].map(([v, l]) => option(v, l, v === p.splitMode)))),
+      h('span', { class: 'note', text: { current: 'Keeps today\u2019s ratio of what each person pays in.', equal: 'Everyone pays the same.', income: 'Enter each person\u2019s net income per month; shares follow the incomes. Incomes stay in this tab and in your settings file only.', custom: 'Enter a percentage per person.' }[p.splitMode] })) : null,
+    m.split.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'plan-split' },
+      h('caption', { class: 'sr-only', text: 'Monthly amount per person to reach the plan' }),
+      h('thead', {}, h('tr', {}, th('Person'), p.splitMode === 'income' ? th('Net income / month', 'num') : p.splitMode === 'custom' ? th('Share %', 'num') : null, th('Today', 'num'), th(`Needed (${SPLIT_MODES.get(p.splitMode).toLowerCase()})`, 'num'), th('Change', 'num'), th('On average', 'num hide-sm'))),
+      h('tbody', {}, m.split.map((x, i) => h('tr', {},
+        h('th', { attrs: { scope: 'row' }, text: `${x.name} (${pct(x.share)})` }),
+        p.splitMode === 'income' || p.splitMode === 'custom' ? h('td', { class: 'num' }, h('span', { class: 'budget-input' }, h('input', {
+          type: 'text', id: `split-w-${i}`, value: p.weights.has(x.name) ? String(p.weights.get(x.name)) : '',
+          attrs: { inputmode: 'decimal', maxlength: 14, autocomplete: 'off', placeholder: p.splitMode === 'income' ? 'e.g. 8000' : 'e.g. 50', 'aria-label': `${p.splitMode === 'income' ? 'Net monthly income' : 'Share in percent'} of ${x.name}` },
+          on: { change: (e) => { const v = parseBudgetInput(e.target.value); if (Number.isNaN(v)) { setStatus('Enter a number.', true); return; } keepFocus(`split-w-${i}`, () => { const w = new Map(state.plan.weights); if (v == null) w.delete(x.name); else w.set(x.name, v); state.plan.weights = w; renderAll(); }); } },
+        }))) : null,
+        h('td', { class: 'num', text: money0(x.current) }),
+        h('td', { class: 'num', text: money0(x.amount) }),
+        h('td', { class: ['num', x.change > 0 ? 'bad' : 'good'], text: signed0(x.change) }),
+        h('td', { class: 'num hide-sm', text: money0(m.splitAvg[i]?.amount || 0) })))))) : null,
+    h('p', { class: 'note', text: '\u201CNeeded\u201D keeps the balance above the minimum in every month, including months with yearly or quarterly bills. \u201COn average\u201D is enough over the whole period but can dip in expensive months.' }));
+
+  const table = h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'plan-months' },
+    h('caption', { class: 'sr-only', text: `Forecast per month in ${c} with today's contributions` }),
+    h('thead', {}, h('tr', {}, th('Month'), th('Start', 'num hide-sm'), th('Paid in', 'num'), th('Fixed costs', 'num'), th('Other spending', 'num hide-sm'), th('To goals', 'num hide-sm'), th('End', 'num'))),
+    h('tbody', {}, f.rows.map((r) => h('tr', { class: r.belowBuffer ? 'low' : '' },
+      h('th', { attrs: { scope: 'row' }, text: monthLabel(r.month) }),
+      h('td', { class: 'num hide-sm', text: money0(r.opening) }),
+      h('td', { class: 'num', text: money0(r.moneyIn) }),
+      h('td', { class: 'num', text: money0(r.fixed), attrs: { title: r.fixedItems.map((x) => `${x.payee} ${money0(x.amount)}`).join(', ') || null } }),
+      h('td', { class: 'num hide-sm', text: money0(r.variable) }),
+      h('td', { class: 'num hide-sm', text: money0(r.goals) }),
+      h('td', { class: ['num', r.belowBuffer ? 'bad' : ''], text: money0(r.closing) }))))));
+
+  return h('div', {},
+    peopleLists(),
+    section('Forecast & goals', `From ${monthLabel(f.start)} to ${monthLabel(f.end)} for ${p.scope || 'all accounts'}. Fixed costs are placed in the months they are due (${m.fixed.length} confirmed, ${money0(f.fixedMonthly)} a month on average); other spending and income come from your complete months.`,
+      inputsPanel),
+    section('What needs to be paid in', null, results),
+    section('Balance month by month', 'Two lines: with today\u2019s contributions, and with the amount needed. The dashed line is the minimum you want to keep.', chart, h('div', { class: 'legend' },
+      h('span', {}, h('span', { class: 'line-key line-a' }), 'With today\u2019s contributions'),
+      h('span', {}, h('span', { class: 'line-key line-b' }), `Paying in ${money0(f.required)} a month`),
+      h('span', {}, h('span', { class: 'budget-key' }), 'Minimum')), table));
 }
 
 // ---------- budget ----------
@@ -1368,6 +1569,7 @@ function clearAll() {
     files: [], accountSettings: [], fileChoices: new Map(), payeeRules: new Map(), categoryAliases: new Map(), ownNames: '', cardOwners: new Map(), budgetEdits: new Map(),
     fixedOverrides: new Map(), fixedManual: new Map(), person: '', account: '', preset: 'all', txSearch: '',
     excluded: new Set([TRANSFERS]), drill: { category: null, payee: null, month: null },
+    plan: { scope: '', horizon: 12, balance: null, buffer: 0, variable: null, otherIncome: null, contributions: null, goals: [], splitMode: 'current', weights: new Map() },
   });
   history.replaceState(null, '', location.pathname);
   state.view = 'overview';
@@ -1430,7 +1632,7 @@ function init() {
 
   // Nothing is stored: warn before the tab forgets the user's setup.
   window.addEventListener('beforeunload', (e) => {
-    if (state.files.length && (state.budgetEdits.size || state.cardOwners.size || state.accountSettings.length || state.payeeRules.size || state.categoryAliases.size || state.fixedOverrides.size || state.fixedManual.size)) { e.preventDefault(); e.returnValue = ''; }
+    if (state.files.length && (state.budgetEdits.size || state.cardOwners.size || state.accountSettings.length || state.payeeRules.size || state.categoryAliases.size || state.fixedOverrides.size || state.fixedManual.size || state.plan.goals.length || state.plan.weights.size)) { e.preventDefault(); e.returnValue = ''; }
   });
 
   // Redraw size-dependent charts when the layout width changes.

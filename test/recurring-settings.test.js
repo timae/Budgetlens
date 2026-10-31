@@ -77,6 +77,7 @@ const stateLike = () => ({
   payeeRules: new Map([['cafe central', 'Coffee & bakery']]),
   categoryAliases: new Map([['food', 'Groceries']]),
   ownNames: 'Muster, Alex',
+  plan: { scope: 'Joint', horizon: 24, balance: -50, buffer: 1000, variable: null, otherIncome: 20, contributions: [{ name: 'Alex', monthly: 6500 }], goals: [{ name: 'Holidays', amount: 4800, saved: 100, by: '2027-07' }], splitMode: 'income', weights: new Map([['Alex', 9000]]) },
   fixedOverrides: new Map([['CHF|wingo', { active: false }]]),
   fixedManual: new Map([['CHF|kita', { key: 'CHF|kita', payee: 'Kita', category: 'Childcare & kids', currency: 'CHF', amount: 1450, every: 1 }]]),
   excluded: new Set([TRANSFERS]),
@@ -92,6 +93,7 @@ test('settings file round trip', () => {
   assert.equal(back.payeeRules.get('cafe central'), 'Coffee & bakery');
   assert.equal(back.categoryAliases.get('food'), 'Groceries');
   assert.equal(back.ownNames, 'Muster, Alex');
+  assert.deepEqual({ ...back.plan, weights: [...back.plan.weights] }, { scope: 'Joint', horizon: 24, balance: -50, buffer: 1000, variable: null, otherIncome: 20, contributions: [{ name: 'Alex', monthly: 6500 }], goals: [{ name: 'Holidays', amount: 4800, saved: 100, by: '2027-07' }], splitMode: 'income', weights: [['Alex', 9000]] });
   assert.equal(back.fixedOverrides.get('CHF|wingo').active, false);
   assert.equal(back.fixedManual.get('CHF|kita').amount, 1450);
   assert.ok(back.excluded.has(TRANSFERS));

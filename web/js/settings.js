@@ -34,6 +34,10 @@ export function saveSettings(s) {
     excluded: [...s.excluded],
     rules: s.ruleEntries.map(([category, keywords]) => ({ category, keywords })),
     useFileCategories: !!s.useFileCategories,
+    plan: s.plan ? {
+      scope: s.plan.scope, horizon: s.plan.horizon, balance: s.plan.balance, buffer: s.plan.buffer, variable: s.plan.variable, otherIncome: s.plan.otherIncome,
+      contributions: s.plan.contributions, goals: s.plan.goals, splitMode: s.plan.splitMode, weights: [...s.plan.weights].map(([name, value]) => ({ name, value })),
+    } : null,
   };
   return JSON.stringify(data, null, 2);
 }
@@ -107,7 +111,28 @@ export function loadSettings(text) {
   const rules = arr(d.rules).slice(0, LIMITS.maxRules)
     .filter((r) => isObj(r) && str(r.category, LIMITS.maxCategoryLength))
     .map((r) => [str(r.category, LIMITS.maxCategoryLength), typeof r.keywords === 'string' ? r.keywords.slice(0, 8000) : '']);
+  let plan = null;
+  if (isObj(d.plan)) {
+    const p = d.plan;
+    const n = (v) => (v === null || v === undefined ? null : num(v));
+    const month = (v) => (typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? v : null);
+    plan = {
+      scope: str(p.scope, 40),
+      horizon: [6, 12, 24, 36].includes(p.horizon) ? p.horizon : 12,
+      balance: typeof p.balance === 'number' && Number.isFinite(p.balance) && Math.abs(p.balance) <= 1e9 ? Math.round(p.balance * 100) / 100 : null,
+      buffer: num(p.buffer) ?? 0,
+      variable: n(p.variable),
+      otherIncome: n(p.otherIncome),
+      contributions: Array.isArray(p.contributions)
+        ? p.contributions.slice(0, 12).filter((c) => isObj(c) && str(c.name, 40)).map((c) => ({ name: str(c.name, 40), monthly: num(c.monthly) ?? 0 }))
+        : null,
+      goals: arr(p.goals).slice(0, 20).filter((g) => isObj(g) && str(g.name, 40) && month(g.by)).map((g) => ({ name: str(g.name, 40), amount: num(g.amount) ?? 0, saved: num(g.saved) ?? 0, by: month(g.by) })),
+      splitMode: ['current', 'equal', 'income', 'custom'].includes(p.splitMode) ? p.splitMode : 'current',
+      weights: new Map(arr(p.weights).slice(0, 12).filter((w) => isObj(w) && str(w.name, 40) && num(w.value) != null).map((w) => [str(w.name, 40), num(w.value)])),
+    };
+  }
   return {
+    plan,
     notes, budgetEdits, cardOwners, accountSettings, payeeRules, categoryAliases, ownNames, fixedOverrides, fixedManual, excluded,
     rules: rules.length ? rules : null,
     useFileCategories: typeof d.useFileCategories === 'boolean' ? d.useFileCategories : true,

@@ -95,3 +95,42 @@ export function drawMonthly(el, months, series, { currency, height, onSelect, se
   });
   setChildren(el, svg);
 }
+
+/**
+ * Balance lines over months with a dashed minimum line.
+ * series: [{ name, cls, values: [{ month, value }] }]
+ */
+export function drawBalance(el, series, { currency, buffer = 0 }) {
+  const W = Math.max(320, el.clientWidth || 800);
+  const H = W < 560 ? 220 : 280;
+  const m = { l: 62, r: 14, t: 16, b: 30 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const all = series.flatMap((s0) => s0.values.map((v) => v.value)).concat([buffer, 0]);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (hi === lo) hi = lo + 1;
+  const step = niceStep(hi - lo);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  const months = series[0]?.values.map((v) => v.month) || [];
+  const x = (i) => m.l + (months.length > 1 ? (i / (months.length - 1)) * iw : iw / 2);
+  const y = (v) => m.t + ih - ((v - lo) / (hi - lo)) * ih;
+  const svg = s('svg', { attrs: { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-labelledby': 'balance-desc' } },
+    s('desc', { id: 'balance-desc', text: `Forecast account balance per month in ${currency}. The same numbers are in the table below.` }));
+  for (let v = lo; v <= hi + 1e-9; v += step) {
+    svg.append(s('line', { class: v === 0 ? 'axis' : 'grid', attrs: { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) } }));
+    svg.append(s('text', { class: 'tick', attrs: { x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end' }, text: money0(v) }));
+  }
+  svg.append(s('line', { class: 'budget-mark', attrs: { x1: m.l, x2: W - m.r, y1: y(buffer), y2: y(buffer) } }, s('title', { text: `Minimum ${currency} ${money0(buffer)}` })));
+  const every = Math.ceil(months.length / Math.max(1, Math.floor(iw / 52)));
+  months.forEach((mo, i) => {
+    if (i % every) return;
+    svg.append(s('text', { class: 'tick', attrs: { x: x(i), y: H - 10, 'text-anchor': 'middle' }, text: i === 0 || mo.endsWith('-01') ? `${monthTick(mo)} ${mo.slice(2, 4)}` : monthTick(mo) }));
+  });
+  for (const sr of series) {
+    const d = sr.values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v.value).toFixed(1)}`).join(' ');
+    svg.append(s('path', { class: ['bal-line', sr.cls], attrs: { d, fill: 'none' } }));
+    sr.values.forEach((v, i) => svg.append(s('circle', { class: ['bal-dot', sr.cls, v.value < buffer ? 'low' : ''], attrs: { cx: x(i), cy: y(v.value), r: 3.5 } },
+      s('title', { text: `${monthLabel(v.month)} \u00B7 ${sr.name}: ${currency} ${money0(v.value)}` }))));
+  }
+  setChildren(el, svg);
+}
