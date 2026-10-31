@@ -70,9 +70,13 @@ export function matchCategory(desc, rules) {
  * Category for one transaction. Inflows that match a spending rule are refunds
  * (they reduce that category); other inflows are income.
  */
-export function categorize(tx, rules, { useFileCategory = true } = {}) {
-  if (useFileCategory && tx.rawCategory) return tx.rawCategory;
-  const hit = matchCategory(tx.desc, rules);
+export function categorize(tx, rules, { useFileCategory = true, payeeRules = null, aliases = null } = {}) {
+  // 1. A category the user picked for this payee. 2. The file's own category (mapped through
+  // the user's aliases). 3. Keyword rules on the cleaned payee, then on the full description.
+  const byPayee = payeeRules && tx.payee ? payeeRules.get(normalizeKey(tx.payee)) : null;
+  if (byPayee) return byPayee;
+  if (useFileCategory && tx.rawCategory) return (aliases && aliases.get(normalizeKey(tx.rawCategory))) || tx.rawCategory;
+  const hit = (tx.payee && matchCategory(tx.payee, rules)) || matchCategory(tx.desc, rules);
   if (tx.amount > 0) return hit && hit !== OTHER ? hit : INCOME;
   return hit || OTHER;
 }
@@ -92,6 +96,13 @@ export function payeeName(desc, brands) {
   let s = cleanText(desc, 300);
   if (!s) return '\u2014';
   const key = ` ${normalizeKey(s)} `;
+  // Person-to-person payments (TWINT, Revolut, PayPal): keep the person, so payments to
+  // different people are not merged into one payee.
+  const p2p = /\b(?:twint|revolut|paypal)\b[^:]*?\b(?:sent to|send to|an|to|von|from|de|\u00E0|a|da)\s*:?\s+([A-Z\u00C0-\u017E][\w\u00C0-\u017E.'-]+(?:\s+[A-Z\u00C0-\u017E][\w\u00C0-\u017E.'-]+){0,2})/i.exec(s);
+  if (p2p && !/\d{3,}/.test(p2p[1])) {
+    const service = /twint/i.test(s) ? 'TWINT' : /revolut/i.test(s) ? 'Revolut' : 'PayPal';
+    return `${p2p[1].trim()} (${service})`.slice(0, 40);
+  }
   for (const [needle, name] of brands) if (key.includes(` ${needle} `)) return name;
   for (let i = 0; i < 3; i++) for (const re of PREFIXES) s = s.replace(re, '');
   s = s.split(/ \u00B7 |, (?=[A-Z\u00C4\u00D6\u00DCa-z\u00E4\u00F6\u00FC .\-]*\d{1,4}\b)|,\s*\d{4}\s/)[0];

@@ -55,9 +55,41 @@ function nameIndex(txs, budgets) {
   return (name) => names.get(normalizeKey(name)) || name;
 }
 
+const daysIn = (ym) => new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0)).getUTCDate();
+
+/**
+ * How much of each month the data covers. Each account (or file) covers the days from its first to
+ * its last transaction; a month is complete when some source covers it from day 1-3 to its last
+ * or second-to-last day. Returns Map(month -> { fraction, full, from, to }).
+ */
+export function monthCoverage(txs, sourceOf = (t) => t.account ?? t.file ?? '') {
+  const spans = new Map();
+  for (const t of txs) {
+    if (t.synthetic) continue;
+    const k = sourceOf(t);
+    const s = spans.get(k);
+    if (!s) spans.set(k, { min: t.date, max: t.date });
+    else { if (t.date < s.min) s.min = t.date; if (t.date > s.max) s.max = t.date; }
+  }
+  const out = new Map();
+  for (const { min, max } of spans.values()) {
+    for (const m of monthRange(min.slice(0, 7), max.slice(0, 7))) {
+      const dim = daysIn(m);
+      let a = m === min.slice(0, 7) ? +min.slice(8, 10) : 1;
+      const b = m === max.slice(0, 7) ? +max.slice(8, 10) : dim;
+      if (a <= 3) a = 1; // the first days of a month often have no transactions
+      const fraction = Math.min(1, (b - a + 1) / dim);
+      const full = a === 1 && b >= dim - 1;
+      const cur = out.get(m);
+      if (!cur || fraction > cur.fraction || (full && !cur.full)) out.set(m, { fraction: full ? 1 : fraction, full, from: a, to: b });
+    }
+  }
+  return out;
+}
+
 /**
  * Analyse transactions and budgets for a period and currency.
- * opts: { from, to, currency, excluded: Set<string>, focus: string|null }
+ * opts: { from, to, currency, excluded: Set<string>, focus: string|null, coverage?: Map from monthCoverage }
  */
 export function analyze(allTxs, allBudgets, opts) {
   const { currency, excluded = new Set(), focus = null } = opts;
@@ -72,8 +104,14 @@ export function analyze(allTxs, allBudgets, opts) {
   const txs = txsC.filter((t) => inRange(t.month)).map((t) => ({ ...t, category: canon(t.category) }));
   const isSpending = (cat) => cat !== INCOME && !excluded.has(cat);
 
-  // Months with data inside the range define the averaging base.
+  // Months with data inside the range define the averaging base. Incomplete months (an export
+  // that starts or ends mid-month) count with the share of days they cover.
+  const coverage = opts.coverage || monthCoverage(txsC);
   const activeMonths = range.filter((m) => txs.some((t) => t.month === m));
+  const cov = (m) => coverage.get(m) || { fraction: 1, full: true };
+  const fullMonths = activeMonths.filter((m) => cov(m).full);
+  const partialMonths = activeMonths.filter((m) => !cov(m).full).map((m) => ({ month: m, ...cov(m) }));
+  const effMonths = Math.max(0.03, activeMonths.reduce((s, m) => s + cov(m).fraction, 0) || range.length || 1);
   const monthsCount = Math.max(1, activeMonths.length || range.length);
 
   // Category totals.
@@ -102,10 +140,12 @@ export function analyze(allTxs, allBudgets, opts) {
       const mm = budgetByMonth.get(b.month);
       if (mm) mm.set(name, (mm.get(name) || 0) + b.amount);
     } else {
-      cat(name).budget += b.amount * monthsCount;
+      // Prorated: a month the data covers only partly gets that share of the monthly budget.
       for (const m of activeMonths.length ? activeMonths : range) {
+        const amount = b.amount * (activeMonths.length ? cov(m).fraction : 1);
+        cat(name).budget += amount;
         const mm = budgetByMonth.get(m);
-        mm.set(name, (mm.get(name) || 0) + b.amount);
+        mm.set(name, (mm.get(name) || 0) + amount);
       }
     }
   }
@@ -116,7 +156,7 @@ export function analyze(allTxs, allBudgets, opts) {
       const spent = r2(c.spent), budget = r2(c.budget);
       const diff = r2(budget - spent);
       const pct = budget ? (spent - budget) / budget : null;
-      const status = !budget ? 'none' : spent > budget * 1.005 ? 'over' : spent >= budget * 0.9 ? 'near' : 'under';
+      const status = !budget ? 'none' : spent > budget * 1.005 ? 'over' : spent >= budget * 0.995 ? 'on' : spent >= budget * 0.9 ? 'near' : 'under';
       return { name: c.name, spent, budget, diff, pct, status, count: c.count, fixed: r2(c.fixed), included: isSpending(c.name) };
     })
     .sort((a, b) => b.spent - a.spent || a.name.localeCompare(b.name));
@@ -138,11 +178,11 @@ export function analyze(allTxs, allBudgets, opts) {
     }
     let budget = 0;
     for (const [name, v] of budgetByMonth.get(m) || []) if (isSpending(name)) budget += v;
-    return { month: m, byCat, total: r2(total), budget: r2(budget) };
+    return { month: m, byCat, total: r2(total), budget: r2(budget), full: cov(m).full, coverage: cov(m).fraction };
   });
 
-  // Month over month: last two months with data.
-  const withData = monthly.filter((m) => activeMonths.includes(m.month));
+  // Month over month: the last two complete months (incomplete ones would compare apples with half apples).
+  const withData = monthly.filter((m) => fullMonths.includes(m.month));
   const last = withData[withData.length - 1], prev = withData[withData.length - 2];
   const mom = last && prev ? { lastMonth: last.month, prevMonth: prev.month, last: last.total, prev: prev.total, change: r2(last.total - prev.total), pct: prev.total ? (last.total - prev.total) / Math.abs(prev.total) : null } : null;
 
@@ -162,9 +202,11 @@ export function analyze(allTxs, allBudgets, opts) {
     .sort((a, b) => b.spent - a.spent);
 
   return {
-    currency, from, to, range, activeMonths, monthsCount,
+    currency, from, to, range, activeMonths, monthsCount, fullMonths, partialMonths, effMonths: Math.round(effMonths * 1000) / 1000,
     totals: {
-      spent, income: r2(income), avgMonthly: r2(spent / monthsCount),
+      spent, income: r2(income),
+      // Average over complete months; with none, scale by the days covered.
+      avgMonthly: fullMonths.length ? r2(monthly.filter((m) => m.full && activeMonths.includes(m.month)).reduce((x, m) => x + m.total, 0) / fullMonths.length) : r2(spent / effMonths),
       fixed: r2(included.reduce((s, c) => s + c.fixed, 0)),
       budget: budgetTotal, spentBudgeted, variance: r2(budgetTotal - spentBudgeted),
       variancePct: budgetTotal ? (spentBudgeted - budgetTotal) / budgetTotal : null,

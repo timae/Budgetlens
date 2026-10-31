@@ -71,7 +71,7 @@ node tools/e2e.mjs --url http://127.0.0.1:8080 \
   --chrome "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"   # headless browser checks
 ```
 
-`tools/e2e.mjs` drives Chrome over the DevTools protocol with no dependencies. It checks that the app starts empty, generates test files from `test/fixtures/sample.js` and drops them into the file input, then walks through the guided setup (accounts, cards, fixed costs, budgets), every page of the navigation, the drill-down from month to category to payee to transactions, fixed-cost confirmation and declaration, filters, sorting, search, the currency switch, per-file settings, rules, restoring a settings file and the exports. It also:
+`tools/e2e.mjs` drives Chrome over the DevTools protocol with no dependencies. It checks that the app starts empty, generates test files from `test/fixtures/sample.js` and drops them into the file input, then walks through the guided setup (accounts, categories, cards, fixed costs, budgets), loads the same export twice to check it is counted once, every page of the navigation, the drill-down from month to category to payee to transactions, fixed-cost confirmation and declaration, filters, sorting, search, the currency switch, per-file settings, rules, restoring a settings file and the exports. It also:
 
 - Loads a CSV full of XSS, formula and bidi payloads and checks that nothing executes and nothing renders as HTML.
 - Confirms Trusted Types and CSP block `innerHTML`, `fetch` and external images.
@@ -133,34 +133,53 @@ Pages are addressed by the URL fragment (`#spending`, `#fixed` …), so the brow
 
 ## Guided setup
 
-Dropping the first files starts a six-step setup. Every step can be skipped and the setup can be re-run any time (*Guided setup*).
+Dropping the first files starts a seven-step setup. Every step can be skipped and the setup can be re-run any time (*Guided setup*).
 
-1. **Check files.** What was detected per file: type, period, number of transactions and skipped rows. Each file opens to show its settings and a preview.
-2. **Accounts.** Name each account and mark it shared or individual, with an owner.
-3. **Cards & people.** Say who each card belongs to, and see the resulting spending per person.
-4. **Fixed costs.** Confirm or dismiss the recurring payments that were found.
-5. **Budgets.** Type monthly budgets, or let Budget Lens suggest them from average spending.
-6. **Done.** Save the settings file for next time.
+1. **Check files.** What was detected per file: type, period, number of transactions, skipped rows, transactions also found in another file, and the account. Each file opens to show its settings and a preview. Warnings (for example "all amounts are positive") open automatically.
+2. **Accounts.** The accounts found in the files, grouped automatically. Name them, mark each shared or individual with an owner, regroup files if needed, and list the names that identify transfers between your own accounts.
+3. **Categories.** The biggest payees that no rule recognised: type or pick a category for each. Category names that come from your files can be mapped onto yours.
+4. **Cards & people.** Say who each card belongs to, and see the resulting spending per person.
+5. **Fixed costs.** Confirm or dismiss the recurring payments that were found, with the reason for each.
+6. **Budgets.** Type monthly budgets, or let Budget Lens suggest them from average spending.
+7. **Done.** Save the settings file for next time.
+
+## How the numbers are made
+
+- **Accounts.** Files are grouped into accounts by IBAN when the export contains one (in the header lines or a column; the IBAN checksum is verified). Otherwise files with the same bank layout that share a card number, or at least three identical transactions, count as the same account. You can split a file off or attach it to another account.
+- **Duplicates.** Within one account, a transaction that appears in several files (overlapping exports) is counted once. Identical rows inside the same file (two coffees of 3.40 on one day) are kept.
+- **Incomplete months.** A month is complete when the data covers it from day 1–3 to its last or second-to-last day. The monthly average uses complete months only. Month over month compares the last two complete months. Monthly budgets for an incomplete month are prorated by the days covered. Incomplete months appear lighter in the charts.
+- **Money between own accounts.** It is a transfer, not income or spending, when the amount leaves one account and arrives in another within four days, or when the text names one of your people or the names you entered (for example a family name). Transfers are left out of totals by default.
+- **Categories.** In this order: the category you chose for a payee, the file's own category (mapped through your aliases), keyword rules on the cleaned payee name, then keyword rules on the full description. Money in that matches a spending rule is a refund; other money in is income.
+- **Sign.** A single amount column with negative values is read as "negative = money out". If a column has only positive amounts, the descriptions decide: salary, credit and refund wording means money in, anything else is treated as an expense list. A warning asks you to check either way.
+- **Columns ignored on purpose.** Balance, fees, references, original/foreign amounts and currencies, exchange rates, individual amounts of collective orders, and "type of transaction" columns.
 
 ## Fixed costs
 
-Payments to the same payee are treated as a fixed cost when they come back at a steady rhythm with a steady amount. The rhythm can be monthly, every two months, quarterly, half-yearly or yearly. Each payee is checked on:
+Payments to the same payee count as a fixed cost when they come back at a steady rhythm with a steady amount.
 
-- **Rhythm:** the typical gap between months with a payment, and how many gaps match it.
-- **Amount:** the median payment and its robust deviation. For a payee with one large and several small payments, like an insurance premium plus excess bills, the monthly main payment is used.
-- **Day of month:** how steady it is.
-- **Frequency:** payees paid several times in most months, like supermarkets, are never fixed costs.
-- **Category:** housing, insurance, utilities, childcare, subscriptions, health and taxes get a little more tolerance.
+- **Rhythm.** The gaps between payments are measured in days, so a standing order that is booked on the 31st one month and the 1st the next is still monthly. Monthly, every two months, quarterly, half-yearly and yearly are recognised.
+- **Amount.** The reference is the median of the largest payment per month. Smaller payments to the same payee, like the excess bills next to an insurance premium, don't distort it.
+- **Signals.** Wording such as Dauerauftrag, standing order, eBill, LSV or direct debit, and categories like housing, insurance, utilities, childcare, subscriptions, health and taxes allow more tolerance. eBills paid on varying days are still monthly.
+- **Not fixed.** Payees paid several times in most months, like supermarkets, are never fixed costs.
 
-Clear cases are confirmed automatically. Less certain ones, and anything seen in only two months, are listed as suggestions. You can confirm or dismiss each, change its rhythm and expected amount (empty = any amount), or declare any payee a fixed cost. Payments within 15% (at least 5) of the expected amount count as fixed. *Overdue* flags a fixed cost whose next payment is more than 10 days late compared to the newest data.
+Clear cases (three or more payments, regular, steady amount) are confirmed automatically. Payments seen only twice are suggestions, as are less certain cases. Every detection lists its reasons, for example "monthly rhythm (2 of 2 gaps) · same amount every time · standing order or eBill · only seen 2 times so far".
 
-Fixed costs show up as a figure in the overview, as the "fixed part" of each category and of each drill-down level, and as a filter and column in the transactions.
+You can confirm or dismiss each one, change its rhythm and expected amount (empty = any amount), or declare any payee a fixed cost. Payments within 15% (at least 5) of the expected amount count as fixed.
+
+The figures are kept apart. *Expected per month* comes from the rhythm and amount. *Paid in period* is the sum of the matched payments. *Overdue* flags a fixed cost whose next payment is more than 10 days late compared with the newest data of its own account.
 
 ## Settings file
 
-Nothing is stored in the browser. *Save settings* downloads `budget-lens-settings.json` with your accounts and their files, card owners, fixed-cost decisions, budgets, excluded categories and category rules. It contains no transactions. It does contain file names, account and person names, the last four digits of assigned cards, the payee names and expected amounts of fixed costs, and your budgets, so treat it as private. Drop the settings file in together with your CSV files next time to restore everything.
+Nothing is stored in the browser. *Save settings* downloads `budget-lens-settings.json` with the following:
 
-The loader treats the file as untrusted. It is limited to 1 MB and accepts only the expected shape. Every string is cleaned and limited in length, and keys are checked. Values go into `Map`s, so `__proto__` and similar keys cannot pollute objects. The tab asks for confirmation before closing while there are unsaved settings.
+- **Accounts:** IBAN, or bank layout plus card numbers, along with name, type and owner. Accounts are recognised by these, not by file name, so next month's export with a new file name is still found.
+- **People:** card owners and the names for own transfers.
+- **Categories:** payee categories, category aliases, excluded categories and keyword rules.
+- **Fixed costs and budgets:** your fixed-cost decisions and your budgets.
+
+The file contains no transactions. It does hold names, IBANs, card endings, payee names and amounts of fixed costs, and budgets, so treat it as private. Drop it in together with your CSV files next time to restore everything.
+
+The loader treats the file as untrusted. It is limited to 1 MB and accepts only the expected shape. IBAN, card and key formats are checked, and every string is cleaned and limited in length. Values go into `Map`s, so `__proto__` and similar keys cannot pollute objects. The tab asks for confirmation before closing while there are unsaved settings.
 
 ## Budgets
 
@@ -170,13 +189,13 @@ The *Budget vs actual* table has an editable **monthly budget** per category. A 
 
 ## People, cards and accounts
 
-Each loaded bank export is an **account**. In *People and accounts* you can:
+Every bank account found in your files is an **account**. In *People and accounts* you can:
 
-- **Name the account.** Give several files the same name (for example monthly exports) to treat them as one account.
+- **Name the account.** Files of the same account are grouped automatically (see *How the numbers are made*).
 - **Mark it shared or individual.** An individual account has an owner, and all of its spending counts as that person's.
 - **Assign cards to people.** Card numbers are read from the descriptions (`xxxx 1234`, `Karte Nr. XXXX1234`, `*1234`). On a shared account, card payments count for the card's owner and everything else (rent, bills, standing orders) counts as *Shared*.
 
-The summary shows spending, share and top categories per person. The *Account* and *Person* filters in the toolbar narrow the whole dashboard, compare table and exports. The transaction export includes account, card and person columns. Transfers from a personal account into a shared one land in *Transfers & savings*, which is excluded by default, so money moved between your own accounts isn't counted twice.
+The summary shows spending, share and top categories per person. The *Account* and *Person* filters in the toolbar narrow the whole dashboard, compare table and exports. The transaction export includes account, card and person columns. Transfers between your own accounts land in *Transfers & savings*, which is excluded by default, so money moved between your own accounts is neither spending nor income.
 
 The app ships without any data: it starts empty and shows nothing until you add your own files.
 
@@ -186,8 +205,8 @@ The app ships without any data: it starts empty and shows nothing until you add 
 main.go, server.go     static server (embed, allowlist, headers, gzip, ETag, healthz, redirect, shutdown)
 server_test.go         server and static front-end checks
 web/                   everything that is served
-  js/                  ES modules: csv, numbers, dates, detect, categorize, analyze, pipeline, people, budget,
-                       recurring, settings (no DOM, unit-tested); app, charts, dom, format (UI)
+  js/                  ES modules: csv, numbers, dates, detect, categorize, analyze, pipeline, accounts, people,
+                       budget, recurring, settings (no DOM, unit-tested); app, charts, dom, format (UI)
   assets/              CSS and the Archivo font
 test/                  node:test unit tests; fixtures/sample.js generates made-up bank files for tests
 tools/e2e.mjs          headless-browser checks (dev only, not shipped)

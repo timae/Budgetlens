@@ -18,7 +18,12 @@ export const KINDS = new Map([
 ]);
 
 // [role, priority, phrases]. Phrases are normalised (lowercase, no accents/punctuation).
+const TYPE_HEADERS = new Set(['type', 'typ', 'art', 'type of transaction', 'transaction type', 'transaktionstyp', 'buchungsart', 'activity type', 'cd', 'dc']);
 const HEADER_RULES = [
+  // Columns that look like amounts, currencies or descriptions but must not be used as such.
+  ['ignore', 10, ['original amount', 'original currency', 'originalbetrag', 'originalwahrung', 'foreign currency', 'foreign amount', 'fremdwahrung', 'fremdwaehrung', 'devise originale',
+    'montant original', 'importo originale', 'valuta originale', 'exchange rate', 'fx rate', 'wechselkurs', 'kurs', 'taux de change', 'tasso di cambio', 'individual amount', 'einzelbetrag',
+    'montant individuel', 'importo singolo', 'type', 'typ', 'art', 'type of transaction', 'transaction type', 'transaktionstyp', 'buchungsart', 'activity type', 'label', 'tags', 'payment reference']],
   ['ignore', 9, ['saldo', 'balance', 'solde', 'kontostand', 'saldo chf', 'balance chf', 'fee', 'fees', 'gebuhr', 'gebuhren', 'gebuehr', 'frais', 'commissione', 'commissioni', 'spesen',
     'iban', 'kontonummer', 'account', 'account number', 'konto', 'referenz', 'reference', 'referenznummer', 'reference number', 'zkb referenz', 'zkb reference', 'transaktions nr', 'transaktionsnummer',
     'transaction id', 'id', 'state', 'status', 'product', 'fussnoten', 'footnotes', 'einzelbetrag', 'abschlusszeit', 'time', 'zeit', 'uhrzeit', 'bic', 'swift', 'karte', 'card', 'kartennummer',
@@ -45,6 +50,43 @@ const HEADER_RULES = [
   ['month', 7, ['monat', 'month', 'mois', 'mese', 'periode', 'period', 'periodo', 'buchungsmonat']],
   ['direction', 8, ['soll haben', 's h', 'debit credit', 'credit debit', 'cr dr', 'dr cr', 'd c', 'c d', 'indicator', 'debit credit indicator', 'buchungsart', 'cdi', 'typ soll haben']],
 ];
+
+const INCOMING_WORDS = /(lohn|salar|salary|gehalt|payroll|gutschrift|credit|einzahlung|deposit|refund|ruckerstattung|r\u00FCckerstattung|remboursement|rimborso|zins|interest|dividend|income|einnahme|revenu|entrata)/i;
+
+/** Text that helps recognise the account behind a file: IBAN (preamble or column), header layout, bank. */
+export function accountHint(rows, s) {
+  const header = s.headerRow >= 0 ? rows[s.headerRow] : [];
+  const keys = header.map((x) => normalizeKey(x));
+  const layout = keys.length ? keys.join('|') : `cols:${s.columns.length}`;
+  const ibans = new Map();
+  const scan = (text) => {
+    for (const m of String(text).toUpperCase().matchAll(/\b([A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?)\b/g)) {
+      const iban = m[1].replace(/ /g, '');
+      if (validIban(iban)) ibans.set(iban, (ibans.get(iban) || 0) + 1);
+    }
+  };
+  for (const r of rows.slice(0, Math.max(0, s.headerRow))) scan(r.join(' '));
+  for (const r of rows.slice(-8)) scan(r.join(' '));
+  keys.forEach((k, c) => { if (/\b(iban|konto|kontonummer|account)\b/.test(k)) for (const r of rows.slice(s.headerRow + 1, s.headerRow + 200)) scan(r[c] || ''); });
+  let iban = '';
+  let top = 0;
+  for (const [k, n] of ibans) if (n > top) { top = n; iban = k; }
+  const l = ` ${keys.join(' ')} `;
+  const bank = / zkb /.test(l) ? 'ZKB' : / beschreibung1 | description1 /.test(l) ? 'UBS' : / avisierungstext | notification text /.test(l) ? 'PostFinance'
+    : / booked at /.test(l) ? 'Raiffeisen' : / started date /.test(l) ? 'Revolut' : / original amount .* wise /.test(l) ? 'neon' : / activity name /.test(l) ? 'Yuh' : '';
+  return { iban, layout, bank };
+}
+
+function validIban(iban) {
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(iban)) return false;
+  const moved = iban.slice(4) + iban.slice(0, 4);
+  let rest = 0;
+  for (const ch of moved) {
+    const v = ch >= 'A' ? String(ch.charCodeAt(0) - 55) : ch;
+    for (const d of v) rest = (rest * 10 + Number(d)) % 97;
+  }
+  return rest === 1;
+}
 
 const TOTAL_RE = /^(total|totals|summe|summen|gesamt|gesamttotal|gesamtsumme|totale|totali|totaux|somme|saldo|kontostand|schlusssaldo|anfangssaldo|endsaldo|closing balance|opening balance|balance|solde|sum|zwischensumme|zwischentotal|subtotal|sub total|sous total|subtotale|jahrestotal|jahr|year|annual|annuel|anno|ytd)\b/;
 export const isTotalLabel = (s) => TOTAL_RE.test(normalizeKey(s));
@@ -162,7 +204,9 @@ export function deriveSettings(rows, headerRow, { fileName = '', defaultMonth, y
   const header = headerRow >= 0 ? rows[headerRow] : [];
   const data = rows.slice(headerRow + 1);
   const stats = columnStats(data, width, header);
-  const yearGuess = year || guessYear(header) || new Date().getFullYear();
+  const headerYear = guessYear(header);
+  const yearGuess = year || headerYear || new Date().getFullYear();
+  const yearAssumed = !year && !headerYear;
   const columns = new Array(width).fill('ignore');
   const taken = new Set();
 
@@ -209,7 +253,9 @@ export function deriveSettings(rows, headerRow, { fileName = '', defaultMonth, y
     for (let c = 0; c < width; c++) if (columns[c] === 'description' && c !== cat) columns[c] = 'ignore';
     // Month columns are budgets unless the file name says it holds actual spending.
     const meaning = /(^|[^a-z])(ist|actuals?|ausgaben|spent|spending|effektiv|reel|consuntivo)([^a-z]|$)/i.test(fileName) && !/budget|plan/i.test(fileName) ? 'actual' : 'budget';
-    return finish({ headerRow, kind: 'wide', columns, monthCols: Object.fromEntries(mcols), wideMeaning: meaning, year: yearGuess }, rows, stats, defaultMonth);
+    // Month headers like "Jan" without a year need one; header years like "Jan 26" are used as is.
+    const monthsHaveYear = [...mcols.keys()].every((c) => /\d{2}/.test(header[c] || ''));
+    return finish({ headerRow, kind: 'wide', columns, monthCols: Object.fromEntries(mcols), wideMeaning: meaning, year: yearGuess, yearAssumed: yearAssumed && !monthsHaveYear }, rows, stats, defaultMonth);
   }
 
   // 3) Content fallbacks.
@@ -235,7 +281,7 @@ export function deriveSettings(rows, headerRow, { fileName = '', defaultMonth, y
     if (c !== -1) { columns[c] = taken.has('date') ? 'description' : 'category'; decided.add(c); }
   }
   if (!taken.has('direction') && (taken.has('amount')) && stats[columns.indexOf('amount')]?.negRatio === 0) {
-    const c = stats.findIndex((s, i) => !decided.has(i) && s.flagRatio > 0.9 && s.distinct <= 6);
+    const c = stats.findIndex((s, i) => (!decided.has(i) || TYPE_HEADERS.has(keys[i])) && s.flagRatio > 0.9 && s.distinct <= 6);
     if (c !== -1) { columns[c] = 'direction'; decided.add(c); }
   }
 
@@ -268,7 +314,15 @@ function finish(s, rows, stats, defaultMonth) {
   if (s.kind === 'wide') for (const c of Object.keys(s.monthCols)) numVals.push(...stats[+c].values.slice(0, 100));
   s.decimal = detectDecimal(numVals);
   const amountCol = cols.indexOf('amount');
-  s.sign = amountCol !== -1 && stats[amountCol].negRatio === 0 && cols.indexOf('direction') === -1 ? 'positive-out' : 'negative-out';
+  s.sign = 'negative-out';
+  s.signGuessed = false;
+  if (amountCol !== -1 && stats[amountCol].negRatio === 0 && cols.indexOf('direction') === -1 && stats[amountCol].values.length) {
+    // Only positive amounts: an expense log, or a file of incoming money (salary, refunds)?
+    const descVals = cols.flatMap((r, c) => (r === 'description' || r === 'category' ? stats[c].values.slice(0, 200) : []));
+    const incoming = descVals.filter((v) => INCOMING_WORDS.test(v)).length;
+    s.sign = descVals.length && incoming / descVals.length >= 0.5 ? 'negative-out' : 'positive-out';
+    s.signGuessed = true;
+  }
   const curCol = cols.indexOf('currency');
   s.currency = 'CHF';
   if (curCol !== -1) {

@@ -4,8 +4,9 @@ import { LIMITS } from './limits.js';
 import { ENCODINGS } from './csv.js';
 import { KINDS, ROLES, ROLE_LABELS } from './detect.js';
 import { processFile, prepareTransactions, collectBudgets } from './pipeline.js';
-import { DEFAULT_RULES, TRANSFERS, INCOME, buildRules, ruleText } from './categorize.js';
-import { analyze, comparePeriods, currencies, dataMonths, percentDiff, presetRange } from './analyze.js';
+import { DEFAULT_RULES, TRANSFERS, INCOME, OTHER, buildRules, ruleText } from './categorize.js';
+import { clusterAccounts, dedupe, defaultAccountName, fingerprint, markOwnTransfers, matchSaved } from './accounts.js';
+import { analyze, comparePeriods, currencies, dataMonths, monthCoverage, percentDiff, presetRange } from './analyze.js';
 import { normalizeKey, toCSV, cleanText } from './sanitize.js';
 import { h, $, setChildren, option } from './dom.js';
 import { drawMonthly, drawTreemap } from './charts.js';
@@ -27,6 +28,7 @@ const VIEWS = [
 const STEPS = [
   ['files', 'Check files'],
   ['accounts', 'Accounts'],
+  ['categories', 'Categories'],
   ['cards', 'Cards & people'],
   ['fixed', 'Fixed costs'],
   ['budget', 'Budgets'],
@@ -45,8 +47,15 @@ const state = {
   fileBudgets: [],
   budgets: [],
   okFiles: [],
-  accounts: new Map(), // normalised name -> {name, kind, owner}
-  fileAccounts: new Map(), // normalised file name -> account name (from a settings file)
+  // Accounts are recognised by fingerprint (IBAN, or column layout + cards), never by file name.
+  accountSettings: [], // [{iban, layout, cards[], name, kind, owner}]
+  fileChoices: new Map(), // file id -> 'own' | file id it belongs with (user regrouping)
+  clusters: [], // current accounts: {id, files[], iban, layout, bank, cards, name, kind, owner, saved}
+  dupRemoved: new Map(), // file id -> transactions skipped because another file has them
+  payeeRules: new Map(), // normalised payee -> category chosen by the user
+  categoryAliases: new Map(), // normalised file category -> category
+  ownNames: '', // words that identify transfers between own accounts
+  coverage: new Map(),
   cardOwners: new Map(),
   budgetEdits: new Map(),
   fixedOverrides: new Map(),
@@ -75,7 +84,7 @@ const state = {
 const DELIMS = new Map([[',', 'Comma ,'], [';', 'Semicolon ;'], ['\t', 'Tab'], ['|', 'Pipe |']]);
 const DATE_LABELS = new Map([['DMY', 'Day first (31.12.2026)'], ['MDY', 'Month first (12/31/2026)'], ['YMD', 'ISO (2026-12-31)'], ['serial', 'Excel serial number']]);
 const DEC_LABELS = new Map([['dot', "1'234.50 (dot decimal)"], ['comma', '1.234,50 (comma decimal)']]);
-const STATUS = new Map([['over', 'Over'], ['near', 'Near limit'], ['under', 'Under'], ['none', 'No budget']]);
+const STATUS = new Map([['over', 'Over'], ['on', 'On budget'], ['near', 'Near limit'], ['under', 'Under'], ['none', 'No budget']]);
 
 // ---------- small helpers ----------
 function setStatus(msg, error = false) {
@@ -104,7 +113,6 @@ function keepFocus(id, fn) {
 }
 
 // ---------- files ----------
-const defaultAccountName = (name) => cleanPerson(String(name).replace(/\.(csv|tsv|txt)$/i, '').replace(/[_-]+/g, ' ')) || 'Account';
 
 async function addFiles(list) {
   const files = [...list];
@@ -112,13 +120,16 @@ async function addFiles(list) {
   const wasEmpty = state.files.length === 0;
   const skipped = [];
   let settingsLoaded = false;
+  const skippedNotes = [];
   for (const f of files) {
     const isJson = /\.json$/i.test(f.name) || f.type === 'application/json';
     if (isJson) {
       if (f.size > MAX_SETTINGS_BYTES) { skipped.push(`${cleanText(f.name, 60)} (settings file too large)`); continue; }
       try {
-        applySettings(loadSettings(await f.text()));
+        const loaded = loadSettings(await f.text());
+        applySettings(loaded);
         settingsLoaded = true;
+        skippedNotes.push(...loaded.notes);
       } catch (e) {
         skipped.push(`${cleanText(f.name, 60)} (${e instanceof Error ? e.message : 'unreadable'})`);
       }
@@ -128,7 +139,7 @@ async function addFiles(list) {
     if (f.size > LIMITS.maxFileBytes) { skipped.push(`${cleanText(f.name, 60)} (over 15 MB)`); continue; }
     try {
       const bytes = new Uint8Array(await f.arrayBuffer());
-      state.files.push({ id: ++state.seq, name: f.name, bytes, overrides: {}, open: false, account: state.fileAccounts.get(normalizeKey(f.name)) || defaultAccountName(f.name) });
+      state.files.push({ id: ++state.seq, name: f.name, bytes, overrides: {}, open: false });
     } catch {
       skipped.push(cleanText(f.name, 60));
     }
@@ -141,7 +152,7 @@ async function addFiles(list) {
   reprocess();
   const ok = state.files.filter((f) => f.result).length;
   const msg = [`${ok} file${ok === 1 ? '' : 's'} read in this browser.`];
-  if (settingsLoaded) msg.push('Settings restored.');
+  if (settingsLoaded) msg.push('Settings restored.', ...skippedNotes);
   if (skipped.length) msg.push(`Skipped: ${skipped.join(', ')}.`);
   setStatus(msg.join(' '), skipped.length > 0);
   if (state.view === 'setup') $('#main').focus();
@@ -150,8 +161,10 @@ async function addFiles(list) {
 function applySettings(s) {
   state.budgetEdits = s.budgetEdits;
   state.cardOwners = s.cardOwners;
-  state.accounts = s.accounts;
-  state.fileAccounts = s.fileAccounts;
+  state.accountSettings = s.accountSettings;
+  state.payeeRules = s.payeeRules;
+  state.categoryAliases = s.categoryAliases;
+  state.ownNames = s.ownNames;
   state.fixedOverrides = s.fixedOverrides;
   state.fixedManual = s.fixedManual;
   state.excluded = s.excluded.size ? s.excluded : new Set([TRANSFERS]);
@@ -160,10 +173,6 @@ function applySettings(s) {
     state.rules = buildRules(s.rules);
   }
   state.useFileCategories = s.useFileCategories;
-  for (const f of state.files) {
-    const a = s.fileAccounts.get(normalizeKey(f.name));
-    if (a) f.account = a;
-  }
 }
 
 function runFile(f, defaultMonth) {
@@ -184,17 +193,56 @@ function reprocess() {
   recompute();
 }
 
-function accountFor(f) {
-  const name = f.account || defaultAccountName(f.name);
-  const a = state.accounts.get(normalizeKey(name));
-  return { name, kind: a?.kind || 'shared', owner: a?.owner || '' };
+/** Account settings for a cluster: saved ones (matched by fingerprint) or defaults. */
+function resolveCluster(c) {
+  const idx = matchSaved(c, state.accountSettings);
+  const saved = idx >= 0 ? state.accountSettings[idx] : null;
+  const firstFile = state.okFiles[c.files[0]];
+  return { ...c, name: saved?.name || defaultAccountName(c, firstFile?.name), kind: saved?.kind || 'shared', owner: saved?.owner || '', saved: idx, recognisable: !!(c.iban || c.cards.size) };
+}
+
+/** Change a cluster's name, type or owner; the setting is stored with the cluster's fingerprint. */
+function updateAccount(cluster, patch) {
+  let idx = matchSaved(cluster, state.accountSettings);
+  if (idx < 0) {
+    state.accountSettings.push({ iban: cluster.iban, layout: cluster.layout, cards: [...cluster.cards], name: cluster.name, kind: cluster.kind, owner: cluster.owner });
+    idx = state.accountSettings.length - 1;
+  }
+  const cur = state.accountSettings[idx];
+  state.accountSettings[idx] = { ...cur, ...patch, iban: cur.iban || cluster.iban, layout: cluster.layout, cards: [...new Set([...cur.cards, ...cluster.cards])] };
+  recompute();
+}
+
+/** Names that mark transfers between the household's own accounts. */
+function ownNameList() {
+  const people = [...state.cardOwners.values(), ...state.accountSettings.map((a) => a.owner)];
+  return [...state.ownNames.split(','), ...people].map((x) => x.trim()).filter(Boolean);
 }
 
 function recompute() {
   state.okFiles = state.files.filter((f) => f.result);
   const ok = state.okFiles.map((f) => f.result);
-  let txs = prepareTransactions(ok, state.rules, { useFileCategories: state.useFileCategories });
-  txs = assignPeople(txs, { cardOwners: state.cardOwners, accountOfFile: (i) => accountFor(state.okFiles[i]) });
+  let txs = prepareTransactions(ok, state.rules, { useFileCategories: state.useFileCategories, payeeRules: state.payeeRules, aliases: state.categoryAliases });
+  // 1. Which files are the same bank account.
+  const byFile = new Map();
+  for (const t of txs) { if (!byFile.has(t.file)) byFile.set(t.file, []); byFile.get(t.file).push(t); }
+  const fps = state.okFiles.map((f, i) => (f.result.settings.kind === 'transactions' ? fingerprint(f.result, byFile.get(i) || []) : null));
+  const idxOf = new Map(state.okFiles.map((f, i) => [f.id, i]));
+  const choices = new Map();
+  for (const [fid, choice] of state.fileChoices) {
+    if (!idxOf.has(fid)) continue;
+    if (choice === 'own') choices.set(idxOf.get(fid), 'own');
+    else if (idxOf.has(choice)) choices.set(idxOf.get(fid), idxOf.get(choice));
+  }
+  const { clusters, of } = clusterAccounts(fps, choices);
+  state.clusters = clusters.map(resolveCluster);
+  const clusterById = new Map(state.clusters.map((c) => [c.id, c]));
+  // 2. Transactions that several exports of the same account contain are kept once.
+  const d = dedupe(txs, (fi) => of[fi] || `file${fi}`);
+  state.dupRemoved = new Map([...d.removed].map(([fi, n]) => [state.okFiles[fi].id, n]));
+  // 3. Account, person, transfers between own accounts, fixed costs.
+  txs = assignPeople(d.txs, { cardOwners: state.cardOwners, accountOfFile: (i) => clusterById.get(of[i]) || { name: state.okFiles[i].result.name, kind: 'shared', owner: '' } });
+  txs = markOwnTransfers(txs, ownNameList());
   state.fixed = fixedCosts(detectRecurring(txs), state.fixedOverrides, state.fixedManual);
   state.txs = markFixed(txs, state.fixed);
   state.fileBudgets = collectBudgets(ok);
@@ -208,7 +256,6 @@ function recompute() {
   renderAll();
 }
 
-/** Stable category colours: rank by spending across all data in the currency. */
 function assignColors() {
   const tot = new Map();
   for (const t of state.txs) {
@@ -244,7 +291,8 @@ function viewTxs() {
 const inPeriod = (t) => t.currency === state.currency && (!state.from || (t.month >= state.from && t.month <= state.to));
 
 function analysis(extra = {}) {
-  return analyze(viewTxs(), state.budgets, { from: state.from, to: state.to, currency: state.currency, excluded: state.excluded, ...extra });
+  state.coverage = monthCoverage(state.txs.filter((t) => t.currency === state.currency));
+  return analyze(viewTxs(), state.budgets, { from: state.from, to: state.to, currency: state.currency, excluded: state.excluded, coverage: state.coverage, ...extra });
 }
 
 // ---------- shell: navigation and views ----------
@@ -314,18 +362,22 @@ function hero(a) {
   const period = !a.from ? 'No dated rows' : a.from === a.to ? monthLabel(a.from) : `${monthLabel(a.from)} \u2013 ${monthLabel(a.to)}`;
   const fx = activeFixed();
   const fixedMonthly = fx.reduce((s, f) => s + (f.monthly || 0), 0);
+  const partial = a.partialMonths.map((p) => `${monthLabel(p.month)} incomplete (days ${p.from}\u2013${p.to})`).join(' \u00B7 ');
+  const avgSub = a.fullMonths.length
+    ? `average of ${a.fullMonths.length} complete month${a.fullMonths.length === 1 ? '' : 's'}${partial ? ` \u00B7 ${partial}` : ''}`
+    : `scaled from ${Math.round(a.effMonths * 10) / 10} months of data`;
   const items = [
     figure('Total spent', [curSpan(c), money0(t.spent)], `${period}${t.income ? ` \u00B7 income ${money0(t.income)}` : ''}`),
-    figure('Monthly average', [curSpan(c), money0(t.avgMonthly)], `over ${a.monthsCount} month${a.monthsCount === 1 ? '' : 's'} with data`),
-    figure('Fixed costs', [curSpan(c), money0(fixedMonthly)], fx.length ? `per month \u00B7 ${fx.length} recurring \u00B7 ${t.avgMonthly ? pct(fixedMonthly / t.avgMonthly) : '\u2013'} of the average` : 'None confirmed yet'),
+    figure('Monthly average', [curSpan(c), money0(t.avgMonthly)], avgSub),
+    figure('Fixed costs', [curSpan(c), money0(fixedMonthly)], fx.length ? `expected per month \u00B7 ${fx.length} recurring \u00B7 paid in period ${money0(t.fixed)}` : 'None confirmed yet'),
   ];
   if (t.budget > 0) {
     const over = t.variance < 0;
-    items.push(figure('Budget variance', [curSpan(c), money0(Math.abs(t.variance))], `${signedPct(t.variancePct)} \u00B7 ${over ? 'over' : 'under'} a budget of ${money0(t.budget)}`, over ? 'bad' : 'good'));
-  } else items.push(figure('Budget variance', '\u2013', 'No budget yet'));
+    items.push(figure('Vs budget', [curSpan(c), money0(Math.abs(t.variance))], `${over ? 'over' : 'under'} the ${money0(t.budget)} budget of budgeted categories (${signedPct(t.variancePct)})${t.unbudgeted > 0.5 ? ` \u00B7 ${money0(t.unbudgeted)} spent without a budget` : ''}`, over ? 'bad' : 'good'));
+  } else items.push(figure('Vs budget', '\u2013', 'No budget yet'));
   const mom = t.mom;
-  if (mom && mom.pct != null) items.push(figure('Month over month', signedPct(mom.pct), `${monthLabel(mom.lastMonth)}: ${money0(mom.last)} vs ${money0(mom.prev)}`, mom.change > 0 ? 'bad' : 'good'));
-  else items.push(figure('Month over month', '\u2013', 'Needs two months with data'));
+  if (mom && mom.pct != null) items.push(figure('Month over month', signedPct(mom.pct), `${monthLabel(mom.lastMonth)}: ${money0(mom.last)} vs ${money0(mom.prev)} (complete months)`, mom.change > 0 ? 'bad' : 'good'));
+  else items.push(figure('Month over month', '\u2013', 'Needs two complete months'));
   return h('section', { class: 'hero', attrs: { 'aria-label': 'Key figures' } }, items);
 }
 
@@ -378,6 +430,7 @@ function monthlyChart(chartEl, legendEl, a, { onSelect, selected, category, heig
     const legend = series.map((x) => h('span', {}, h('span', { class: ['swatch', x.cls] }), x.name));
     if (!category && totals.size > series.length) legend.push(h('span', {}, h('span', { class: ['swatch', 'cx'] }), 'Other categories'));
     if (data.some((m) => m.budget > 0)) legend.push(h('span', {}, h('span', { class: 'budget-key' }), 'Budget'));
+    if (data.some((m) => m.full === false)) legend.push(h('span', {}, h('span', { class: 'partial-key' }), 'Incomplete month (lighter, budget prorated)'));
     setChildren(legendEl, legend);
   }
   // Same data as a table for screen readers (a div wrapper because tables ignore width/overflow).
@@ -466,6 +519,10 @@ function detailPanel(a, periodA) {
       h('p', { class: 'note', text: isFixed
         ? `Fixed cost: ${CADENCES.get(item.every).toLowerCase()}, ${item.amount == null ? 'any amount' : `${c} ${money(item.amount)}`}.`
         : item ? 'Looks like a recurring payment. Confirm it as a fixed cost?' : 'Not a fixed cost.' }),
+      h('datalist', { id: 'category-list' }, knownCategories().map((x) => option(x, x))),
+      h('div', { class: 'field' }, h('label', { class: 'label', htmlFor: 'payee-cat', text: 'Category of this payee' }),
+        h('input', { type: 'text', id: 'payee-cat', value: state.payeeRules.get(normalizeKey(d.payee)) || txs.find((t) => t.amount < 0)?.category || '', attrs: { list: 'category-list', maxlength: LIMITS.maxCategoryLength, autocomplete: 'off' },
+          on: { change: (e) => { const v = e.target.value; setPayeeCategory(d.payee, v, 'payee-cat'); if (v) state.drill = { ...state.drill, category: cleanText(v, LIMITS.maxCategoryLength) }; renderAll(); } } })),
       h('div', { class: 'btn-row' },
         h('button', { type: 'button', class: 'btn small', text: isFixed ? 'Not a fixed cost' : 'Mark as fixed cost', on: { click: () => toggleFixed(key, d.payee, txs, !isFixed) } }),
         h('button', { type: 'button', class: 'btn small', text: 'Show all payments', on: { click: () => go('transactions') } })),
@@ -481,7 +538,7 @@ function detailPanel(a, periodA) {
       h('h3', {}, catCell(d.category)),
       h('div', { class: 'stats' },
         stat('Spent', `${c} ${money0(cat.spent)}`),
-        stat('Per month', money0(cat.spent / Math.max(1, a.monthsCount))),
+        stat('Per month', money0(cat.spent / a.effMonths)),
         stat('Share', pct(whole ? whole.share : cat.share)),
         stat('Payments', String(cat.count)),
         stat('Fixed part', money0(cat.fixed || 0)),
@@ -580,7 +637,7 @@ function toggleFixed(key, payee, txs, makeFixed) {
       const amounts = txs.filter((t) => t.amount < 0).map((t) => -t.amount).sort((a, b) => a - b);
       const amount = amounts.length ? amounts[amounts.length >> 1] : null;
       const cat = txs.find((t) => t.amount < 0)?.category || 'Other';
-      state.fixedManual.set(key, { key, payee, category: cat, currency: state.currency, amount, every: 1 });
+      state.fixedManual.set(key, { key, payee, category: cat, currency: state.currency, amount, every: 1, account: txs.find((t) => t.amount < 0)?.account || '' });
     }
   } else if (state.fixedManual.has(key)) state.fixedManual.delete(key);
   else state.fixedOverrides.set(key, { ...state.fixedOverrides.get(key), active: false });
@@ -596,19 +653,29 @@ function setFixedOverride(key, patch, focusId) {
 
 function fixedTables({ compact = false } = {}) {
   const c = state.currency;
-  const latest = state.txs.filter((t) => t.currency === c).map((t) => t.date).sort().pop();
+  // Overdue is judged against the newest data of the item's own account.
+  const latestBy = new Map();
+  let latestAll = '';
+  for (const t of state.txs) {
+    if (t.currency !== c) continue;
+    if (t.date > (latestBy.get(t.account) || '')) latestBy.set(t.account, t.date);
+    if (t.date > latestAll) latestAll = t.date;
+  }
+  const latestOf = (f) => latestBy.get(f.account) || latestAll;
+  const paid = new Map();
+  for (const t of state.txs) if (t.fixed && inPeriod(t)) { const k = fixedKey(t.currency, t.payee); paid.set(k, (paid.get(k) || 0) - t.amount); }
   const items = state.fixed.filter((f) => f.currency === c);
   const active = items.filter((f) => f.active);
   const suggested = items.filter((f) => !f.active && state.fixedOverrides.get(f.key)?.active !== false);
   const dismissed = items.filter((f) => !f.active && state.fixedOverrides.get(f.key)?.active === false);
   const monthly = active.reduce((s, f) => s + (f.monthly || 0), 0);
-  const missing = active.filter((f) => fixedStatus(f, latest) === 'missing');
+  const missing = active.filter((f) => fixedStatus(f, latestOf(f)) === 'missing');
 
   const activeTable = active.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'fixed-active' },
     h('caption', { class: 'sr-only', text: `Fixed costs in ${c}` }),
-    h('thead', {}, h('tr', {}, th('Payee'), th('Category', 'hide-sm'), th('Rhythm'), th('Amount', 'num'), th('Per month', 'num'), th('Last paid', 'hide-sm'), th('Next expected', 'hide-sm'), th('Status'), h('th', { attrs: { scope: 'col' } }, h('span', { class: 'sr-only', text: 'Actions' })))),
+    h('thead', {}, h('tr', {}, th('Payee'), th('Category', 'hide-sm'), th('Rhythm'), th('Amount', 'num'), th('Per month', 'num'), th('Paid in period', 'num hide-sm'), th('Last paid', 'hide-sm'), th('Next expected', 'hide-sm'), th('Status'), h('th', { attrs: { scope: 'col' } }, h('span', { class: 'sr-only', text: 'Actions' })))),
     h('tbody', {}, active.map((f, i) => {
-      const st = fixedStatus(f, latest);
+      const st = fixedStatus(f, latestOf(f));
       return h('tr', {},
         h('th', { attrs: { scope: 'row' } }, compact ? f.payee : h('button', { type: 'button', class: 'btn link', text: f.payee, attrs: { 'aria-label': `Drill into ${f.payee}` }, on: { click: () => drillTo({ category: f.category, payee: f.payee, month: null }) } })),
         h('td', { class: 'hide-sm' }, catCell(f.category)),
@@ -620,22 +687,23 @@ function fixedTables({ compact = false } = {}) {
           on: { change: (e) => { const v = parseBudgetInput(e.target.value); if (Number.isNaN(v)) { setStatus('Enter an amount like 1234.50, or leave it empty for any amount.', true); return; } setFixedOverride(f.key, { amount: v }, `fx-amt-${i}`); } },
         }))),
         h('td', { class: 'num', text: f.monthly == null ? '\u2013' : money(f.monthly) }),
+        h('td', { class: 'num hide-sm', text: money(paid.get(f.key) || 0) }),
         h('td', { class: 'hide-sm', text: f.last ? dayLabel(f.last) : '\u2013' }),
         h('td', { class: 'hide-sm', text: f.next ? dayLabel(f.next) : '\u2013' }),
-        h('td', {}, h('span', { class: ['pill', st === 'missing' ? 'over' : f.source === 'auto' ? 'none' : 'under'], text: st === 'missing' ? 'Missing' : f.source === 'auto' ? 'Detected' : f.source === 'declared' ? 'Declared' : 'Confirmed' })),
+        h('td', {}, h('span', { class: ['pill', st === 'missing' ? 'over' : f.source === 'auto' ? 'none' : 'under'], text: st === 'missing' ? 'Overdue' : f.source === 'auto' ? 'Detected' : f.source === 'declared' ? 'Declared' : 'Confirmed', attrs: { title: f.reasons ? f.reasons.join(', ') : 'Declared by you' } })),
         h('td', {}, h('button', { type: 'button', class: 'btn small', text: 'Not fixed', attrs: { 'aria-label': `${f.payee} is not a fixed cost` }, on: { click: () => toggleFixed(f.key, f.payee, [], false) } })));
     })),
-    h('tfoot', {}, h('tr', {}, h('td', { attrs: { colspan: 4 }, text: 'Total per month' }), h('td', { class: 'num', text: money(monthly) }), h('td', { attrs: { colspan: 4 }, class: 'muted', text: `${money0(monthly * 12)} per year` }))))) : h('p', { class: 'empty', text: 'No fixed costs yet. Confirm a suggestion below or add a payee.' });
+    h('tfoot', {}, h('tr', {}, h('td', { attrs: { colspan: 4 }, text: 'Total per month (expected)' }), h('td', { class: 'num', text: money(monthly) }), h('td', { class: 'num hide-sm', text: money([...paid.values()].reduce((x, y) => x + y, 0)) }), h('td', { attrs: { colspan: 4 }, class: 'muted', text: `${money0(monthly * 12)} per year` }))))) : h('p', { class: 'empty', text: 'No fixed costs yet. Confirm a suggestion below or add a payee.' });
 
   const suggestList = (list, restore) => h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: restore ? 'fixed-dismissed' : 'fixed-suggested' },
     h('caption', { class: 'sr-only', text: restore ? 'Payments marked as not fixed' : 'Suggested fixed costs' }),
-    h('thead', {}, h('tr', {}, th('Payee'), th('Category', 'hide-sm'), th('Rhythm'), th('Amount', 'num'), th('Seen', 'num'), h('th', { attrs: { scope: 'col' } }, h('span', { class: 'sr-only', text: 'Actions' })))),
+    h('thead', {}, h('tr', {}, th('Payee'), th('Category', 'hide-sm'), th('Rhythm'), th('Amount', 'num'), th('Why', 'hide-sm'), h('th', { attrs: { scope: 'col' } }, h('span', { class: 'sr-only', text: 'Actions' })))),
     h('tbody', {}, list.map((f) => h('tr', {},
       h('th', { attrs: { scope: 'row' }, text: f.payee }),
       h('td', { class: 'hide-sm' }, catCell(f.category)),
       h('td', { text: CADENCES.get(f.every) }),
       h('td', { class: 'num', text: f.amount == null ? 'any' : money(f.amount) }),
-      h('td', { class: 'num', text: `${f.count}\u00D7` }),
+      h('td', { class: ['hide-sm', 'top-cats'], text: f.reasons ? f.reasons.join(' \u00B7 ') : 'declared' }),
       h('td', {}, h('div', { class: 'btn-row' },
         h('button', { type: 'button', class: 'btn small primary', text: restore ? 'Restore' : 'Yes, fixed', attrs: { 'aria-label': `${f.payee} is a fixed cost` }, on: { click: () => toggleFixed(f.key, f.payee, [], true) } }),
         restore ? null : h('button', { type: 'button', class: 'btn small', text: 'No', attrs: { 'aria-label': `${f.payee} is not a fixed cost` }, on: { click: () => toggleFixed(f.key, f.payee, [], false) } }))))))));
@@ -664,7 +732,8 @@ function fixedTables({ compact = false } = {}) {
       stat('Fixed per month', `${c} ${money0(monthly)}`),
       stat('Per year', money0(monthly * 12)),
       stat('Recurring payments', String(active.length)),
-      stat('Overdue', String(missing.length), missing.length ? 'bad' : '')),
+      stat('Overdue', String(missing.length), missing.length ? 'bad' : ''),
+      stat('Paid in period', money0([...paid.values()].reduce((x, y) => x + y, 0)))),
     activeTable,
     suggested.length ? h('div', {}, h('h3', { class: 'sub-head', text: `Suggestions (${suggested.length})` }), h('p', { class: 'note', text: 'These come back regularly but are less certain. Confirm the ones that are fixed costs.' }), suggestList(suggested, false)) : null,
     add,
@@ -700,7 +769,7 @@ function budgetTable(a) {
     h('tbody', {}, rows.map((x, i) => {
       const scale = Math.max(x.budget, x.spent, 1);
       const edit = state.budgetEdits.get(budgetKey(c, x.name));
-      const monthly = x.budget ? Math.round((x.budget / a.monthsCount) * 100) / 100 : 0;
+      const monthly = x.budget ? Math.round((x.budget / a.effMonths) * 100) / 100 : 0;
       const id = `bud-${i}`;
       return h('tr', {},
         h('th', { attrs: { scope: 'row' } }, catCell(x.name)),
@@ -723,7 +792,7 @@ function budgetTable(a) {
     })),
     h('tfoot', {}, h('tr', {},
       h('td', { text: 'Budgeted categories' }),
-      h('td', { class: 'num', text: t.budget ? money(t.budget / a.monthsCount) : '\u2013' }),
+      h('td', { class: 'num', text: t.budget ? money(t.budget / a.effMonths) : '\u2013' }),
       h('td', { class: 'num', text: money(t.budget) }),
       h('td', { class: 'num', text: money(t.spentBudgeted) }),
       h('td', { class: ['num', t.variance < 0 ? 'bad' : 'good'], text: t.budget ? signed2(t.variance) : '\u2013' }),
@@ -744,7 +813,7 @@ function renderBudgetView() {
   if (!a) return emptyView();
   const note = state.person || state.account
     ? `Showing ${[state.account, state.person].filter(Boolean).join(' \u00B7 ')} against the full budget. Monthly budgets are multiplied by the months in the period.`
-    : 'Type a monthly budget per category or load a budget file. Monthly budgets are multiplied by the months in the period.';
+    : 'Type a monthly budget per category or load a budget file. Monthly budgets are multiplied by the months in the period; incomplete months get the share of days the data covers.';
   return section('Budget vs actual', note, budgetTools(), budgetTable(a));
 }
 
@@ -756,7 +825,7 @@ function suggestBudgets() {
     if (!x.included || x.spent <= 0) continue;
     const key = budgetKey(a.currency, x.name);
     if (x.budget > 0 && !state.budgetEdits.has(key)) continue; // keep budgets that came from files
-    state.budgetEdits.set(key, { category: x.name, amount: suggestMonthly(x.spent, a.monthsCount), currency: a.currency });
+    state.budgetEdits.set(key, { category: x.name, amount: suggestMonthly(x.spent, a.effMonths), currency: a.currency });
     n++;
   }
   refreshBudgets();
@@ -768,7 +837,7 @@ function exportBudget() {
   if (!a) return;
   const rows = a.categories.filter((x) => x.included && x.budget > 0).map((x) => {
     const edit = state.budgetEdits.get(budgetKey(a.currency, x.name));
-    return { category: x.name, amount: edit ? edit.amount : Math.round((x.budget / a.monthsCount) * 100) / 100 };
+    return { category: x.name, amount: edit ? edit.amount : Math.round((x.budget / a.effMonths) * 100) / 100 };
   });
   if (!rows.length) { setStatus('There are no budgets to download yet.', true); return; }
   download(`budget-lens-budget_${a.currency}.csv`, budgetCSV(rows));
@@ -796,57 +865,53 @@ function peopleSummaryTable() {
 }
 
 function peopleLists() {
-  const named = [...new Set([...state.cardOwners.values(), ...[...state.accounts.values()].map((x) => x.owner)].filter(Boolean))].sort();
-  return [
-    h('datalist', { id: 'people-list' }, named.map((n) => option(n, n))),
-    h('datalist', { id: 'account-list' }, [...new Set(state.files.map((f) => f.account))].map((n) => option(n, n))),
-  ];
+  const named = [...new Set([...state.cardOwners.values(), ...state.accountSettings.map((x) => x.owner)].filter(Boolean))].sort();
+  return [h('datalist', { id: 'people-list' }, named.map((n) => option(n, n)))];
 }
 
 function accountsTable() {
   const c = state.currency;
-  const txFiles = state.okFiles.filter((f) => f.result.settings.kind === 'transactions');
-  if (!txFiles.length) return h('p', { class: 'empty', text: 'No bank exports loaded.' });
-  const firstOf = new Map();
-  for (const f of txFiles) {
-    const k = normalizeKey(accountFor(f).name);
-    if (!firstOf.has(k)) firstOf.set(k, f);
-  }
-  const sums = new Map(accountSummary(state.txs.filter(inPeriod), state.excluded).map((x) => [normalizeKey(x.name), x]));
+  if (!state.clusters.length) return h('p', { class: 'empty', text: 'No bank exports loaded.' });
+  const sums = new Map(accountSummary(state.txs.filter(inPeriod), state.excluded).map((x) => [x.name, x]));
   return h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'accounts' },
-    h('caption', { class: 'sr-only', text: 'Accounts: name the account behind each file, mark it shared or individual and set the owner' }),
-    h('thead', {}, h('tr', {}, th('File'), th('Account'), th('Type'), th('Owner'), th(`Spent (${c})`, 'num'))),
-    h('tbody', {}, txFiles.map((f) => {
-      const i = f.id;
-      const acct = accountFor(f);
-      const key = normalizeKey(acct.name);
-      const first = firstOf.get(key) === f;
-      const set = (patch, focusId) => keepFocus(focusId, () => {
-        const cur = state.accounts.get(key) || { name: acct.name, kind: 'shared', owner: '' };
-        state.accounts.set(key, { ...cur, name: acct.name, ...patch });
-        recompute();
-      });
-      return h('tr', {},
-        h('td', { class: 'desc', text: f.result.name }),
-        h('td', {}, h('input', {
-          type: 'text', id: `acct-name-${i}`, value: acct.name,
-          attrs: { list: 'account-list', maxlength: 40, autocomplete: 'off', spellcheck: 'false', 'aria-label': `Account name for ${f.result.name}` },
-          on: { change: (e) => keepFocus(`acct-name-${i}`, () => { f.account = cleanPerson(e.target.value) || defaultAccountName(f.name); recompute(); }) },
-        })),
-        h('td', {}, first
-          ? h('select', { id: `acct-kind-${i}`, attrs: { 'aria-label': `Type of account ${acct.name}` }, on: { change: (e) => set({ kind: e.target.value }, `acct-kind-${i}`) } },
-            [...ACCOUNT_KINDS].map(([v, l]) => option(v, l, v === acct.kind)))
-          : h('span', { class: 'muted', text: 'Same account as above' })),
-        h('td', {}, first
-          ? h('input', {
-            type: 'text', id: `acct-owner-${i}`, value: acct.owner,
-            attrs: { list: 'people-list', maxlength: 40, autocomplete: 'off', spellcheck: 'false', placeholder: acct.kind === 'individual' ? 'e.g. Alex' : 'Not needed', 'aria-label': `Owner of account ${acct.name}` },
-            on: { change: (e) => set({ owner: cleanPerson(e.target.value) }, `acct-owner-${i}`) },
-          })
-          : null),
-        h('td', { class: 'num', text: first ? money0(sums.get(key)?.spent || 0) : '' }));
-    }))));
+    h('caption', { class: 'sr-only', text: 'Accounts found in your files: name them, mark them shared or individual and set the owner' }),
+    h('thead', {}, h('tr', {}, th('Account'), th('Type'), th('Owner'), th('Files'), th(`Spent (${c})`, 'num'))),
+    h('tbody', {}, state.clusters.map((cl, n) => h('tr', {},
+      h('td', {},
+        h('input', {
+          type: 'text', id: `acct-name-${n}`, value: cl.name,
+          attrs: { maxlength: 40, autocomplete: 'off', spellcheck: 'false', 'aria-label': `Name of account ${cl.name}` },
+          on: { change: (e) => keepFocus(`acct-name-${n}`, () => updateAccount(cl, { name: cleanPerson(e.target.value) })) },
+        }),
+        h('span', { class: 'acct-id muted', text: [cl.iban ? `IBAN \u2026${cl.iban.slice(-4)}` : '', cl.cards.size ? `cards ${[...cl.cards].sort().join(', ')}` : '', cl.recognisable ? '' : 'not recognisable next time'].filter(Boolean).join(' \u00B7 ') })),
+      h('td', {}, h('select', { id: `acct-kind-${n}`, attrs: { 'aria-label': `Type of account ${cl.name}` }, on: { change: (e) => keepFocus(`acct-kind-${n}`, () => updateAccount(cl, { kind: e.target.value })) } },
+        [...ACCOUNT_KINDS].map(([v, l]) => option(v, l, v === cl.kind)))),
+      h('td', {}, h('input', {
+        type: 'text', id: `acct-owner-${n}`, value: cl.owner,
+        attrs: { list: 'people-list', maxlength: 40, autocomplete: 'off', spellcheck: 'false', placeholder: cl.kind === 'individual' ? 'e.g. Alex' : 'Not needed', 'aria-label': `Owner of account ${cl.name}` },
+        on: { change: (e) => keepFocus(`acct-owner-${n}`, () => updateAccount(cl, { owner: cleanPerson(e.target.value) })) },
+      })),
+      h('td', {}, h('ul', { class: 'file-list' }, cl.files.map((fi) => {
+        const f = state.okFiles[fi];
+        const id = `acct-file-${f.id}`;
+        const others = state.okFiles.filter((g, gi) => g !== f && fps_kind(g) && !cl.files.includes(gi));
+        return h('li', {},
+          h('span', { class: 'desc', text: f.result.name }),
+          h('select', { id, attrs: { 'aria-label': `Account of file ${f.result.name}` }, on: { change: (e) => keepFocus(id, () => {
+            const v = e.target.value;
+            if (v === 'auto') state.fileChoices.delete(f.id);
+            else if (v === 'own') state.fileChoices.set(f.id, 'own');
+            else state.fileChoices.set(f.id, Number(v));
+            recompute();
+          }) } },
+          option('auto', cl.files.length > 1 ? 'Same account (detected)' : 'Detected automatically', !state.fileChoices.has(f.id)),
+          option('own', 'Separate account', state.fileChoices.get(f.id) === 'own'),
+          others.map((g) => option(String(g.id), `Same account as ${g.result.name}`, state.fileChoices.get(f.id) === g.id))));
+      }))),
+      h('td', { class: 'num', text: money0(sums.get(cl.name)?.spent || 0) }))))));
 }
+
+const fps_kind = (f) => f.result.settings.kind === 'transactions';
 
 function cardsTable() {
   const c = state.currency;
@@ -866,12 +931,84 @@ function cardsTable() {
       h('td', { class: 'num', text: money0(cd.spent.get(c) || 0) }))))));
 }
 
+function ownNamesField() {
+  const suggested = ownNameList().filter((n) => !state.ownNames.includes(n));
+  return h('div', { class: 'field own-names' },
+    h('label', { class: 'label', htmlFor: 'own-names', text: 'Names in transfers between your own accounts' }),
+    h('input', { type: 'text', id: 'own-names', value: state.ownNames, attrs: { maxlength: 200, autocomplete: 'off', spellcheck: 'false', placeholder: 'e.g. family names, comma separated' },
+      on: { change: (e) => keepFocus('own-names', () => { state.ownNames = cleanText(e.target.value, 200); recompute(); }) } }),
+    h('span', { class: 'note', text: `Payments whose text contains one of these names count as transfers, not income or spending. Person names are used too${suggested.length ? ` (${suggested.join(', ')})` : ''}. A payment out of one account and the same amount into another within 4 days is a transfer as well.` }));
+}
+
 function renderPeopleView() {
   return h('div', {},
     peopleLists(),
     section('People', 'Spending per person in the selected period. On shared accounts, card payments count for the card\u2019s owner and everything else counts as shared.', peopleSummaryTable()),
-    section('Accounts', 'Each bank export is an account. Give files of the same account the same name. Mark an account as individual to count all of it for its owner.', accountsTable()),
+    section('Accounts', 'Files of the same account are grouped automatically (same IBAN, or same bank layout and cards). Mark an account as individual to count all of it for its owner.', accountsTable(), ownNamesField()),
     section('Cards', 'Card numbers found in the descriptions. Say who each card belongs to.', cardsTable()));
+}
+
+// ---------- categories review ----------
+function knownCategories() {
+  return [...new Set([...state.rules.map((r) => r.category), ...state.txs.map((t) => t.category), ...state.payeeRules.values()])].filter((c) => c && c !== OTHER).sort();
+}
+
+function setPayeeCategory(payee, category, focusId) {
+  const k = normalizeKey(payee);
+  const v = cleanText(category, LIMITS.maxCategoryLength);
+  if (v) state.payeeRules.set(k, v);
+  else state.payeeRules.delete(k);
+  keepFocus(focusId, recompute);
+}
+
+function categoryReview({ limit = 25 } = {}) {
+  const c = state.currency;
+  const unknown = new Map();
+  for (const t of state.txs) {
+    if (t.currency !== c || t.amount >= 0 || t.category !== OTHER) continue;
+    const u = unknown.get(t.payee) || { payee: t.payee, spent: 0, count: 0 };
+    u.spent -= t.amount;
+    u.count++;
+    unknown.set(t.payee, u);
+  }
+  const rows = [...unknown.values()].sort((a, b) => b.spent - a.spent).slice(0, limit);
+  const ruleCats = new Set(state.rules.map((r) => normalizeKey(r.category)));
+  const fileCats = new Map();
+  for (const f of state.okFiles) for (const t of f.result.records.transactions) if (t.rawCategory && !ruleCats.has(normalizeKey(t.rawCategory))) fileCats.set(normalizeKey(t.rawCategory), t.rawCategory);
+  const list = h('datalist', { id: 'category-list' }, knownCategories().map((x) => option(x, x)));
+  return h('div', { class: 'review' }, list,
+    h('h3', { class: 'sub-head', text: rows.length ? `Payees without a category (${unknown.size})` : 'Every payee has a category' }),
+    rows.length ? h('p', { class: 'note', text: 'Type or pick a category. It applies to every payment to this payee, now and in future files.' }) : null,
+    rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'uncategorised' },
+      h('caption', { class: 'sr-only', text: 'Biggest payees without a category' }),
+      h('thead', {}, h('tr', {}, th('Payee'), th('Payments', 'num'), th(`Spent (${c})`, 'num'), th('Category'))),
+      h('tbody', {}, rows.map((u, i) => h('tr', {},
+        h('th', { attrs: { scope: 'row' }, text: u.payee }),
+        h('td', { class: 'num', text: String(u.count) }),
+        h('td', { class: 'num', text: money0(u.spent) }),
+        h('td', {}, h('input', { type: 'text', id: `pc-${i}`, attrs: { list: 'category-list', maxlength: LIMITS.maxCategoryLength, autocomplete: 'off', placeholder: 'Choose a category', 'aria-label': `Category for ${u.payee}` },
+          on: { change: (e) => setPayeeCategory(u.payee, e.target.value, `pc-${i}`) } }))))))) : null,
+    fileCats.size ? h('div', {},
+      h('h3', { class: 'sub-head', text: 'Categories from your files' }),
+      h('p', { class: 'note', text: 'Your files bring their own category names. Map them onto one name so the same spending is not split in two.' }),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'aliases' },
+        h('caption', { class: 'sr-only', text: 'Categories from files and the category they count as' }),
+        h('thead', {}, h('tr', {}, th('In the file'), th('Counts as'))),
+        h('tbody', {}, [...fileCats].map(([k, name], i) => h('tr', {},
+          h('th', { attrs: { scope: 'row' }, text: name }),
+          h('td', {}, h('input', { type: 'text', id: `alias-${i}`, value: state.categoryAliases.get(k) || '', attrs: { list: 'category-list', maxlength: LIMITS.maxCategoryLength, autocomplete: 'off', placeholder: `Keep \u201C${name}\u201D`, 'aria-label': `Category that ${name} counts as` },
+            on: { change: (e) => keepFocus(`alias-${i}`, () => { const v = cleanText(e.target.value, LIMITS.maxCategoryLength); if (v) state.categoryAliases.set(k, v); else state.categoryAliases.delete(k); recompute(); }) } })))))))) : null);
+}
+
+function payeeCategoryTable() {
+  if (!state.payeeRules.size) return h('p', { class: 'note', text: 'No payee categories yet. Set them in the guided setup or on a payee in Spending.' });
+  return h('div', { class: 'table-wrap' }, h('table', { class: 'data', id: 'payee-rules' },
+    h('caption', { class: 'sr-only', text: 'Categories chosen per payee' }),
+    h('thead', {}, h('tr', {}, th('Payee'), th('Category'), h('th', { attrs: { scope: 'col' } }, h('span', { class: 'sr-only', text: 'Actions' })))),
+    h('tbody', {}, [...state.payeeRules].map(([k, cat]) => h('tr', {},
+      h('th', { attrs: { scope: 'row' }, text: k }),
+      h('td', {}, catCell(cat)),
+      h('td', {}, h('button', { type: 'button', class: 'btn small', text: 'Remove', attrs: { 'aria-label': `Remove category for ${k}` }, on: { click: () => { state.payeeRules.delete(k); recompute(); } } })))))));
 }
 
 // ---------- transactions ----------
@@ -979,6 +1116,8 @@ function fileCards() {
         dates.length ? h('span', { text: `${dayLabel(dates[0])} \u2013 ${dayLabel(dates[dates.length - 1])}` }) : null,
         rs.skippedTotals ? h('span', { text: `${rs.skippedTotals} total/balance rows skipped` }) : null,
         rs.skippedInvalid ? h('span', { text: `${rs.skippedInvalid} rows without date or amount skipped` }) : null,
+        state.dupRemoved.get(f.id) ? h('span', { class: 'chip', text: `${state.dupRemoved.get(f.id)} also in another file, counted once` }) : null,
+        acctOfFile(f) ? h('span', { text: `Account: ${acctOfFile(f)}` }) : null,
         h('span', { text: `${st.encoding.toUpperCase()} \u00B7 ${DELIMS.get(st.delimiter) || st.delimiter} \u00B7 ${st.currency}` }),
         r.warnings.map((w) => h('span', { class: 'chip warn', text: w }))),
       remove);
@@ -987,6 +1126,11 @@ function fileCards() {
     details.append(h('summary', { text: 'Detected settings and preview' }), fileBody(f));
     return h('article', { class: 'file', attrs: { 'aria-label': r.name } }, head, details);
   }));
+}
+
+function acctOfFile(f) {
+  const i = state.okFiles.indexOf(f);
+  return state.clusters.find((c) => c.files.includes(i))?.name || '';
 }
 
 function fileBody(f) {
@@ -1012,7 +1156,12 @@ function fileBody(f) {
       h('label', { class: 'label', htmlFor: `${p}-month`, text: 'Month for undated rows' }),
       h('input', { type: 'text', id: `${p}-month`, value: st.month, attrs: { maxlength: 7, pattern: '\\d{4}-\\d{2}', placeholder: 'YYYY-MM', size: 9, autocomplete: 'off' }, on: { change: (e) => { const v = e.target.value.trim(); if (/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) updateFile(f, { month: v }); else e.target.value = st.month; } } })));
   }
-  if (st.kind === 'wide') fields.push(fieldSelect(`${p}-wide`, 'Month columns hold', st.wideMeaning, [['budget', 'Budget'], ['actual', 'Actual spending']], (v) => updateFile(f, { wideMeaning: v })));
+  if (st.kind === 'wide') {
+    fields.push(fieldSelect(`${p}-wide`, 'Month columns hold', st.wideMeaning, [['budget', 'Budget'], ['actual', 'Actual spending']], (v) => updateFile(f, { wideMeaning: v })));
+    fields.push(h('div', { class: 'field' },
+      h('label', { class: 'label', htmlFor: `${p}-year`, text: 'Year of the month columns' }),
+      h('input', { type: 'number', id: `${p}-year`, value: st.year, attrs: { min: 1990, max: 2100, step: 1 }, on: { change: (e) => { const y = Math.floor(Number(e.target.value)); if (y >= 1990 && y <= 2100) updateFile(f, { year: y, monthCols: undefined }, true); else e.target.value = st.year; } } })));
+  }
   const body = h('div', { class: 'file-body' }, h('div', { class: 'settings-grid' }, fields));
   for (const w of r.warnings) body.append(h('p', { class: 'warning', text: w }));
   body.append(preview(f));
@@ -1100,6 +1249,7 @@ function renderFilesView() {
           h('button', { type: 'button', class: 'btn small', text: 'Save settings', on: { click: exportSettings } }),
           h('button', { type: 'button', class: 'btn small link', id: 'clear-btn', text: 'Clear everything', on: { click: clearAll } }))),
       fileCards()),
+    section('Payee categories', 'Categories you chose for single payees. They win over file categories and keyword rules.', payeeCategoryTable()),
     section('Category rules', 'Used when a file has no category column. The first rule with a matching keyword wins. Keywords match whole words; end one with * to match word beginnings.', rulesEditor()));
 }
 
@@ -1117,8 +1267,13 @@ function renderSetup() {
     ],
     accounts: () => [
       peopleLists(),
-      h('p', { class: 'lead', text: 'Each bank export is an account. Is it shared, like a household account, or does it belong to one person? Give monthly exports of the same account the same name.' }),
+      h('p', { class: 'lead', text: `${state.clusters.length} account${state.clusters.length === 1 ? '' : 's'} found. Files of the same account are grouped by IBAN, or by bank layout and card numbers. Name each account and say whether it is shared, like a household account, or belongs to one person.` }),
       accountsTable(),
+      ownNamesField(),
+    ],
+    categories: () => [
+      h('p', { class: 'lead', text: 'Most payments are categorised by keyword. These payees were not recognised. Give the biggest ones a category; the rest stay in \u201COther\u201D.' }),
+      categoryReview(),
     ],
     cards: () => [
       peopleLists(),
@@ -1203,14 +1358,14 @@ function exportTx() {
 }
 
 function exportSettings() {
-  const text = saveSettings({ ...state, fileAccounts: state.files.map((f) => [f.name, f.account]) });
+  const text = saveSettings(state);
   download('budget-lens-settings.json', text, 'application/json');
   setStatus('Settings saved. Drop this file in together with your CSV files next time.');
 }
 
 function clearAll() {
   Object.assign(state, {
-    files: [], accounts: new Map(), fileAccounts: new Map(), cardOwners: new Map(), budgetEdits: new Map(),
+    files: [], accountSettings: [], fileChoices: new Map(), payeeRules: new Map(), categoryAliases: new Map(), ownNames: '', cardOwners: new Map(), budgetEdits: new Map(),
     fixedOverrides: new Map(), fixedManual: new Map(), person: '', account: '', preset: 'all', txSearch: '',
     excluded: new Set([TRANSFERS]), drill: { category: null, payee: null, month: null },
   });
@@ -1275,7 +1430,7 @@ function init() {
 
   // Nothing is stored: warn before the tab forgets the user's setup.
   window.addEventListener('beforeunload', (e) => {
-    if (state.files.length && (state.budgetEdits.size || state.cardOwners.size || state.accounts.size || state.fixedOverrides.size || state.fixedManual.size)) { e.preventDefault(); e.returnValue = ''; }
+    if (state.files.length && (state.budgetEdits.size || state.cardOwners.size || state.accountSettings.length || state.payeeRules.size || state.categoryAliases.size || state.fixedOverrides.size || state.fixedManual.size)) { e.preventDefault(); e.returnValue = ''; }
   });
 
   // Redraw size-dependent charts when the layout width changes.

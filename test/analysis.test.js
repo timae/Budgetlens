@@ -5,6 +5,8 @@ import { buildRules, defaultRules, categorize, matchCategory, payeeName, BRANDS,
 import { processFile, prepareTransactions, collectBudgets } from '../web/js/pipeline.js';
 import { sampleFiles } from './fixtures/sample.js';
 
+// Unit tests of totals treat every month as complete; coverage has its own tests.
+const FULL = { coverage: { get: () => ({ fraction: 1, full: true }) } };
 const t = (date, amount, category, desc = category, currency = 'CHF') => ({ date, month: date.slice(0, 7), amount, category, desc, payee: desc, currency });
 
 test('default rules categorise Swiss merchants; whole words unless prefixed with *', () => {
@@ -53,7 +55,7 @@ test('analysis totals, shares, budgets, variance and month-over-month', () => {
     t('2026-10-25', 5000, INCOME), t('2026-10-26', -300, TRANSFERS),
   ];
   const budgets = [{ category: 'groceries', month: null, amount: 300, currency: 'CHF' }, { category: 'Housing', month: '2026-10', amount: 1000, currency: 'CHF' }];
-  const a = analyze(txs, budgets, { currency: 'CHF', excluded: new Set([TRANSFERS]) });
+  const a = analyze(txs, budgets, { ...FULL, currency: 'CHF', excluded: new Set([TRANSFERS]) });
   assert.equal(a.totals.spent, 2550);
   assert.equal(a.totals.income, 5000);
   assert.equal(a.totals.avgMonthly, 1275);
@@ -71,7 +73,7 @@ test('analysis totals, shares, budgets, variance and month-over-month', () => {
   assert.equal(a.totals.mom.change, 1350 - 1200);
   assert.ok(Math.abs(a.categories.find((c) => c.name === 'Housing').share - 2000 / 2550) < 1e-9);
   assert.equal(a.monthly.find((m) => m.month === '2026-10').budget, 1300);
-  const one = analyze(txs, budgets, { currency: 'CHF', from: '2026-10', to: '2026-10', excluded: new Set([TRANSFERS]) });
+  const one = analyze(txs, budgets, { ...FULL, currency: 'CHF', from: '2026-10', to: '2026-10', excluded: new Set([TRANSFERS]) });
   assert.equal(one.totals.spent, 1350);
   assert.equal(one.categories.find((c) => c.name === 'Groceries').budget, 300);
 });
@@ -84,7 +86,7 @@ test('currencies are never mixed or converted', () => {
 
 test('user-derived category names cannot pollute prototypes', () => {
   const txs = [t('2026-10-01', -10, '__proto__'), t('2026-10-01', -5, 'constructor'), t('2026-10-01', -1, 'toString')];
-  const a = analyze(txs, [{ category: '__proto__', month: null, amount: 20, currency: 'CHF' }], { currency: 'CHF' });
+  const a = analyze(txs, [{ category: '__proto__', month: null, amount: 20, currency: 'CHF' }], { ...FULL, currency: 'CHF' });
   assert.equal(a.totals.spent, 16);
   assert.equal(a.categories.find((c) => c.name === '__proto__').budget, 20);
   assert.equal(({}).spent, undefined);

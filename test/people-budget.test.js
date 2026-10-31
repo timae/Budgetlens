@@ -61,7 +61,7 @@ test('budget edits replace file budgets per category and currency', () => {
   assert.deepEqual(out.map((b) => [b.category, b.currency, b.amount, b.month]).sort(), [
     ['Eating out', 'CHF', 350, null], ['Groceries', 'CHF', 1400, null], ['Groceries', 'EUR', 300, null],
   ]);
-  const a = analyze([tx({ month: '2026-09', date: '2026-09-01' }), tx({})], out, { currency: 'CHF' });
+  const a = analyze([tx({ month: '2026-09', date: '2026-09-01' }), tx({})], out, { currency: 'CHF', coverage: { get: () => ({ fraction: 1, full: true }) } });
   assert.equal(a.categories.find((c) => c.name === 'Groceries').budget, 2800);
 });
 

@@ -80,7 +80,7 @@
     "detail": ""
   },
   {
-    "name": "setup shows six steps and the files",
+    "name": "setup shows seven steps and the files",
     "ok": true,
     "detail": ""
   },
@@ -90,7 +90,17 @@
     "detail": ""
   },
   {
+    "name": "accounts are recognised from the files",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "accounts can be named, typed and owned",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "step 3: categories review",
     "ok": true,
     "detail": ""
   },
@@ -275,6 +285,16 @@
     "detail": ""
   },
   {
+    "name": "a file loaded twice is counted once",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "totals unchanged by the duplicate file",
+    "ok": true,
+    "detail": "CHF41’088"
+  },
+  {
     "name": "XSS payloads do not execute",
     "ok": true,
     "detail": "{\"xss\":0,\"imgs\":0,\"scripts\":0,\"handlers\":0,\"links\":0,\"literal\":true,\"bold\":0,\"proto\":true,\"bidi\":false}"
@@ -427,7 +447,7 @@
   {
     "name": "files: controls named, ids unique, headings, table headers",
     "ok": true,
-    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":2,\"tablesWithoutHeaders\":0}"
+    "detail": "{\"unnamed\":[],\"dup\":[],\"h1\":1,\"h2\":3,\"tablesWithoutHeaders\":0}"
   },
   {
     "name": "desktop setup: no horizontal overflow",

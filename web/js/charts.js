@@ -72,8 +72,8 @@ export function drawMonthly(el, months, series, { currency, height, onSelect, se
       if (seg.v <= 0) continue;
       const y0 = y(acc), y1 = y(acc + seg.v);
       acc += seg.v;
-      svg.append(s('rect', { class: ['seg', seg.cls], attrs: { x, y: y1, width: bw, height: Math.max(0.5, y0 - y1) } },
-        s('title', { text: `${monthLabel(d.month)} \u00B7 ${seg.name}: ${currency} ${money0(seg.v)}` })));
+      svg.append(s('rect', { class: ['seg', seg.cls, d.full === false ? 'partial' : ''], attrs: { x, y: y1, width: bw, height: Math.max(0.5, y0 - y1) } },
+        s('title', { text: `${monthLabel(d.month)}${d.full === false ? ' (incomplete)' : ''} \u00B7 ${seg.name}: ${currency} ${money0(seg.v)}` })));
     }
     if (d.budget > 0) {
       svg.append(s('line', { class: 'budget-mark', attrs: { x1: x - 5, x2: x + bw + 5, y1: y(d.budget), y2: y(d.budget) } },

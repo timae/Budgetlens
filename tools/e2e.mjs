@@ -115,11 +115,12 @@ const b64 = (s) => Buffer.from(s).toString('base64');
 const fixtures = sampleFiles(new Date()).map((f) => ({ name: f.name, b64: Buffer.from(f.bytes).toString('base64') }));
 await dropFiles('#file-input', fixtures);
 check('adding files starts the guided setup', await waitFor("document.querySelector('#setup-title')?.textContent.includes('Check files')"));
-check('setup shows six steps and the files', await js("return document.querySelectorAll('.stepper li').length === 6 && document.querySelectorAll('.step-body .file').length === 3"));
+check('setup shows seven steps and the files', await js("return document.querySelectorAll('.stepper li').length === 7 && document.querySelectorAll('.step-body .file').length === 3"));
 await shot('setup-files', { full: false });
 await click('#step-next');
 check('step 2: accounts', await waitFor("document.querySelector('#setup-title').textContent.includes('Accounts') && document.querySelector('#accounts')"));
-const ids = await js("return [...document.querySelectorAll('#accounts input[id^=acct-name-]')].map(i => i.id.replace('acct-name-', ''))");
+check('accounts are recognised from the files', (await js("return document.querySelectorAll('#accounts tbody tr').length")) === 2);
+const ids = ['0', '1'];
 await setInput(`#acct-name-${ids[0]}`, 'Joint account');
 await sleep(200);
 await js(`const s = document.querySelector('#acct-kind-${ids[1]}'); s.value = 'individual'; s.dispatchEvent(new Event('change'))`);
@@ -127,6 +128,14 @@ await sleep(200);
 await setInput(`#acct-owner-${ids[1]}`, 'Sam');
 await sleep(200);
 check('accounts can be named, typed and owned', await js(`return document.querySelector('#acct-name-${ids[0]}').value === 'Joint account' && document.querySelector('#acct-owner-${ids[1]}').value === 'Sam'`));
+await click('#step-next');
+check('step 3: categories review', await waitFor("document.querySelector('#setup-title').textContent.includes('Categories') && document.querySelector('.review')"));
+if (await js("return !!document.querySelector('#pc-0')")) {
+  const before = await js("return document.querySelectorAll('#uncategorised tbody tr').length");
+  await setInput('#pc-0', 'Eating out');
+  await sleep(300);
+  check('a payee category can be set', (await js("return document.querySelectorAll('#uncategorised tbody tr').length")) < before || !(await js("return !!document.querySelector('#uncategorised')")));
+}
 await click('#step-next');
 check('step 3: cards', await waitFor("document.querySelector('#setup-title').textContent.includes('Cards') && document.querySelector('#cards')"));
 await setInput('#card-1234', 'Alex');
@@ -239,10 +248,26 @@ await click('#rule-add');
 check('rules editor adds rule', await js("return document.querySelectorAll('#rules .rule-row').length > 10"));
 
 // Settings file: restore a card owner.
-await dropFiles('#file-input-2', [{ name: 'budget-lens-settings.json', type: 'application/json', b64: b64(JSON.stringify({ app: 'budget-lens', version: 1, cards: [{ card: '1234', owner: 'Robin' }], accounts: [], budgets: [], fixed: {}, excluded: ['Transfers & savings'] })) }]);
+await dropFiles('#file-input-2', [{ name: 'budget-lens-settings.json', type: 'application/json', b64: b64(JSON.stringify({ app: 'budget-lens', version: 2, cards: [{ card: '1234', owner: 'Robin' }], accounts: [], budgets: [], fixed: {}, excluded: ['Transfers & savings'] })) }]);
 await sleep(500);
 await js("location.hash = 'people'");
 check('settings file restores setup', await waitFor("document.querySelector('#card-1234')?.value === 'Robin'"));
+// The same export loaded twice is counted once.
+await js("location.hash = 'overview'");
+await waitFor("document.querySelector('#main .figure .value')");
+const totalBefore = await js("return document.querySelector('#main .figure .value').textContent");
+await js("location.hash = 'files'");
+await waitFor("document.querySelector('#file-input-2')");
+await dropFiles('#file-input-2', [{ name: 'ZKB_again.csv', b64: fixtures[0].b64 }]);
+await waitFor("document.querySelectorAll('#main .file').length === 4");
+check('a file loaded twice is counted once', await js("return [...document.querySelectorAll('#main .file .chip')].some(c => c.textContent.includes('counted once'))"));
+await js("location.hash = 'overview'");
+await waitFor("document.querySelector('#main .figure .value')");
+check('totals unchanged by the duplicate file', (await js("return document.querySelector('#main .figure .value').textContent")) === totalBefore, totalBefore);
+await js("location.hash = 'files'");
+await waitFor("document.querySelectorAll('#main .file').length === 4");
+await js("[...document.querySelectorAll('#main .file')].find(f => f.textContent.includes('ZKB_again')).querySelector('.file-head button').click()");
+await waitFor("document.querySelectorAll('#main .file').length === 3");
 await click('#export-summary');
 await click('#export-tx');
 await sleep(300);

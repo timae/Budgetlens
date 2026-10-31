@@ -73,8 +73,10 @@ test('sample bank export: rent, childcare, insurance, phone and streaming are fo
 const stateLike = () => ({
   budgetEdits: new Map([['CHF|groceries', { category: 'Groceries', amount: 1300, currency: 'CHF' }]]),
   cardOwners: new Map([['1234', 'Alex']]),
-  accounts: new Map([['joint', { name: 'Joint', kind: 'shared', owner: '' }], ['alex private', { name: 'Alex private', kind: 'individual', owner: 'Alex' }]]),
-  fileAccounts: [['ZKB_2026.csv', 'Joint']],
+  accountSettings: [{ iban: '', layout: 'date|booking text', cards: ['1234'], name: 'Joint', kind: 'shared', owner: '' }, { iban: 'CH9300762011623852957', layout: 'x', cards: [], name: 'Alex private', kind: 'individual', owner: 'Alex' }],
+  payeeRules: new Map([['cafe central', 'Coffee & bakery']]),
+  categoryAliases: new Map([['food', 'Groceries']]),
+  ownNames: 'Muster, Alex',
   fixedOverrides: new Map([['CHF|wingo', { active: false }]]),
   fixedManual: new Map([['CHF|kita', { key: 'CHF|kita', payee: 'Kita', category: 'Childcare & kids', currency: 'CHF', amount: 1450, every: 1 }]]),
   excluded: new Set([TRANSFERS]),
@@ -86,8 +88,10 @@ test('settings file round trip', () => {
   const back = loadSettings(saveSettings(stateLike()));
   assert.equal(back.budgetEdits.get('CHF|groceries').amount, 1300);
   assert.equal(back.cardOwners.get('1234'), 'Alex');
-  assert.equal(back.accounts.get('alex private').kind, 'individual');
-  assert.equal(back.fileAccounts.get('zkb 2026 csv'), 'Joint');
+  assert.deepEqual(back.accountSettings.map((a) => [a.name, a.kind, a.iban, a.cards.join()]), [['Joint', 'shared', '', '1234'], ['Alex private', 'individual', 'CH9300762011623852957', '']]);
+  assert.equal(back.payeeRules.get('cafe central'), 'Coffee & bakery');
+  assert.equal(back.categoryAliases.get('food'), 'Groceries');
+  assert.equal(back.ownNames, 'Muster, Alex');
   assert.equal(back.fixedOverrides.get('CHF|wingo').active, false);
   assert.equal(back.fixedManual.get('CHF|kita').amount, 1450);
   assert.ok(back.excluded.has(TRANSFERS));
@@ -97,10 +101,10 @@ test('settings file round trip', () => {
 
 test('settings loader rejects or cleans hostile input', () => {
   assert.throws(() => loadSettings('not json'), /not a valid/);
-  assert.throws(() => loadSettings('{"app":"other","version":1}'), /not a Budget Lens/);
+  assert.throws(() => loadSettings('{"app":"other","version":2}'), /not a Budget Lens/);
   assert.throws(() => loadSettings('x'.repeat(2 * 1024 * 1024)), /too large/);
   const evil = JSON.stringify({
-    app: 'budget-lens', version: 1,
+    app: 'budget-lens', version: 2,
     __proto__: { polluted: 1 },
     budgets: [{ currency: 'CHF', category: '<img src=x onerror=alert(1)>\u202E', monthly: 5 }, { currency: 'chf', category: 'x', monthly: 1 }, { currency: 'CHF', category: 'y', monthly: -1 }],
     cards: [{ card: '12345', owner: 'x' }, { card: '9999', owner: '\u200BBob' }],

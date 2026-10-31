@@ -16,19 +16,36 @@ const median = (xs) => {
   const m = s.length >> 1;
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
-const monthIndex = (ym) => +ym.slice(0, 4) * 12 + +ym.slice(5, 7) - 1;
 const r2 = (n) => Math.round(n * 100) / 100;
 
-/** Nearest supported cadence (in months) for a typical gap. */
-function cadenceOf(gap) {
-  let best = 1;
-  for (const c of CADENCES.keys()) if (Math.abs(c - gap) < Math.abs(best - gap)) best = c;
+const DAY = 86400000;
+const dayNo = (iso) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / DAY;
+// Typical length in days of each rhythm and the tolerance for one gap.
+const CADENCE_DAYS = new Map([[1, [30.4, 6]], [2, [60.9, 9]], [3, [91.3, 12]], [6, [182.6, 20]], [12, [365.2, 25]]]);
+// Bank wording for standing orders and direct debits: a strong sign of a fixed cost.
+const ORDER_WORDS = /(dauerauftrag|standing order|ordre permanent|ordine permanente|ebill|e-bill|lsv|direct debit|lastschrift|recouvrement direct|addebito diretto|bank_auto_order|scheduled payment)/i;
+
+function cadenceFromDays(gapDays) {
+  let best = 1, err = Infinity;
+  for (const [c, [d]] of CADENCE_DAYS) {
+    const e = Math.abs(gapDays - d) / d;
+    if (e < err) { err = e; best = c; }
+  }
   return best;
 }
 
+function addMonthsDay(iso, n, day) {
+  const ym = addMonths(iso.slice(0, 7), n);
+  const dim = new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0)).getUTCDate();
+  return `${ym}-${String(Math.min(dim, day)).padStart(2, '0')}`;
+}
+
 /**
- * Find recurring payments. Returns items sorted by monthly cost:
- * { key, payee, category, currency, every, amount, monthly, count, first, last, next, day, confidence: 'high'|'medium', score, varies }
+ * Find recurring payments. Rhythm is measured in days between payments (so a standing order that
+ * moves between the 1st and the 31st is still monthly), amount by the median and a robust spread.
+ * Returns items sorted by monthly cost:
+ * { key, payee, category, currency, account, every, amount, monthly, count, first, last, next, day,
+ *   confidence: 'high'|'medium', reasons: string[], varies }
  */
 export function detectRecurring(txs) {
   const groups = new Map();
@@ -40,45 +57,53 @@ export function detectRecurring(txs) {
   }
   const out = [];
   for (const [key, list] of groups) {
+    list.sort((a, b) => a.date.localeCompare(b.date));
+    // Reference amount: median of the largest payment per month, so a premium plus small
+    // excess bills (same payee) still finds the premium.
     const byMonth = new Map();
-    for (const t of list) {
-      if (!byMonth.has(t.month)) byMonth.set(t.month, []);
-      byMonth.get(t.month).push(t);
-    }
-    const months = [...byMonth.keys()].sort();
-    if (months.length < 2) continue;
-    // Frequent shopping (several payments most months) is not a fixed cost.
-    if (median([...byMonth.values()].map((v) => v.length)) > 1.5) continue;
-    // The main payment of each month: the largest one.
-    const main = months.map((m) => byMonth.get(m).reduce((a, b) => (Math.abs(b.amount) > Math.abs(a.amount) ? b : a)));
+    for (const t of list) byMonth.set(t.month, Math.max(byMonth.get(t.month) || 0, -t.amount));
+    const ref = median([...byMonth.values()]);
+    if (ref <= 0) continue;
+    const main = list.filter((t) => Math.abs(-t.amount - ref) <= Math.max(2, ref * 0.35));
+    if (main.length < 2) continue;
+    const gaps = main.slice(1).map((t, i) => dayNo(t.date) - dayNo(main[i].date));
+    const gapMed = median(gaps);
+    if (gapMed < 20) continue; // several payments a month: shopping, not a fixed cost
+    const every = cadenceFromDays(gapMed);
+    const [len, baseTol] = CADENCE_DAYS.get(every);
+    // eBills and direct debits are paid when the bill is due or approved: allow more drift.
+    const orderedEarly = main.filter((t) => ORDER_WORDS.test(t.desc || '')).length >= Math.ceil(main.length / 2);
+    const tol = baseTol + (orderedEarly ? 6 : 0);
+    const regular = gaps.filter((g) => Math.abs(g - len) <= tol).length / gaps.length;
     const amounts = main.map((t) => -t.amount);
     const amount = median(amounts);
-    if (amount <= 0) continue;
-    const spread = median(amounts.map((a) => Math.abs(a - amount))) / amount; // robust relative deviation
-    const gaps = months.slice(1).map((m, i) => monthIndex(m) - monthIndex(months[i]));
-    const every = cadenceOf(median(gaps));
-    const regular = gaps.filter((g) => Math.abs(g - every) <= (every === 1 ? 0 : 1)).length / gaps.length;
-    const days = main.map((t) => +t.date.slice(8, 10));
-    const dayMed = median(days);
-    const daySpread = median(days.map((d) => Math.abs(d - dayMed)));
-    const category = mostCommon(list.map((t) => t.category));
-
-    // Two months: only consecutive months (monthly) or a year apart, and only as a suggestion.
-    if (months.length < 3 && !((every === 12 || gaps[0] === 1) && spread <= 0.1)) continue;
+    const spread = median(amounts.map((a) => Math.abs(a - amount))) / amount;
+    const timing = median(gaps.map((g) => Math.abs(g - len)));
+    const category = mostCommon(main.map((t) => t.category));
     const hint = FIXED_HINT.has(normalizeKey(category));
-    const steadyAmount = spread <= 0.03 || (hint && spread <= 0.15);
-    const steadyDay = daySpread <= (hint ? 4 : 2);
+    const ordered = main.filter((t) => ORDER_WORDS.test(t.desc || '')).length >= Math.ceil(main.length / 2);
+    const cycles = main.length;
+    const steadyAmount = spread <= 0.03 || ((hint || ordered) && spread <= 0.15);
+    const steadyTiming = timing <= (hint || ordered ? 5 : 3);
+
+    if (cycles < 3 && !(ordered || every === 12 || (hint && spread <= 0.03))) continue;
+    if (regular < 0.5 || spread > 0.35) continue;
     let confidence = null;
-    if (regular >= 0.75 && steadyAmount && (steadyDay || (hint && spread <= 0.005)) && months.length >= 3) confidence = 'high';
-    else if (regular >= 0.5 && (steadyAmount || (spread <= 0.1 && steadyDay))) confidence = 'medium';
-    const score = Math.round(((regular >= 0.75 ? 0.4 : 0.2) + (steadyAmount ? 0.3 : 0.1) + (steadyDay ? 0.2 : 0) + (months.length >= 4 ? 0.1 : 0)) * 100) / 100;
+    if (cycles >= 3 && regular >= 0.75 && steadyAmount && (steadyTiming || ordered)) confidence = 'high';
+    else if (steadyAmount || (spread <= 0.1 && steadyTiming)) confidence = 'medium';
     if (!confidence) continue;
-    const last = main[main.length - 1].date;
+
+    const reasons = [`${CADENCES.get(every).toLowerCase()} rhythm (${gaps.filter((g) => Math.abs(g - len) <= tol).length} of ${gaps.length} gaps)`];
+    reasons.push(spread <= 0.005 ? 'same amount every time' : spread <= 0.03 ? 'almost the same amount' : `amount varies about ${Math.round(spread * 100)}%`);
+    if (ordered) reasons.push('standing order or eBill');
+    if (cycles < 3) reasons.push(`only seen ${cycles} times so far`);
+    const last = main[main.length - 1];
+    const day = Math.round(median(main.map((t) => +t.date.slice(8, 10))));
     out.push({
-      key, payee: list[0].payee, category, currency: list[0].currency, every,
-      amount: r2(amount), monthly: r2(amount / every), count: list.length,
-      first: main[0].date, last, next: `${addMonths(last.slice(0, 7), every)}-${String(Math.min(28, Math.round(dayMed))).padStart(2, '0')}`,
-      day: Math.round(dayMed), confidence, score, varies: spread > 0.02,
+      key, payee: list[0].payee, category, currency: list[0].currency, account: last.account ?? '', every,
+      amount: r2(amount), monthly: r2(amount / every), count: cycles, first: main[0].date, last: last.date,
+      next: addMonthsDay(last.date, every, +last.date.slice(8, 10) >= 28 ? day : +last.date.slice(8, 10)),
+      day, confidence, reasons, varies: spread > 0.02,
     });
   }
   return out.sort((a, b) => b.monthly - a.monthly);

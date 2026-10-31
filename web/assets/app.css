@@ -623,3 +623,17 @@ table.data.compact td { padding: 4px 6px; }
 }
 
 .hero .figure .value { white-space: nowrap; overflow-wrap: normal; font-size: clamp(1.45rem, 2.5vw, 2.4rem); }
+
+/* Review fixes: incomplete months, accounts, categories */
+.chart .seg.partial { opacity: 0.45; }
+.legend .partial-key { width: 12px; height: 12px; background: var(--ink); opacity: 0.45; display: inline-block; }
+.acct-id { display: block; font-size: 0.78rem; margin-top: 4px; }
+.file-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.file-list li { display: grid; gap: 4px; }
+.file-list select { min-height: 30px; font-size: 0.82rem; }
+#accounts td { vertical-align: top; }
+.own-names { margin-top: 16px; max-width: 720px; }
+.own-names input { width: 100%; }
+.review .sub-head:first-of-type { margin-top: 4px; }
+#uncategorised input, #aliases input { min-width: 180px; }
+.detail .field input { width: 100%; }
